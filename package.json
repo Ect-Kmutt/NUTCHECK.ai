@@ -8,7 +8,8 @@
     "start": "node server.js",
     "start:local": "HOST=127.0.0.1 node server.js",
     "start:public": "HOST=0.0.0.0 node server.js",
-    "share:cloudflare": "./share-cloudflare.sh"
+    "share:cloudflare": "./share-cloudflare.sh",
+    "export:gas": "node scripts/export-gas-snapshot.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

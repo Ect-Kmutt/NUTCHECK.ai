@@ -1,0 +1,230 @@
+{
+  "students": [
+    {
+      "id": "65001",
+      "name": "min",
+      "class_name": "ปี1",
+      "nfc_uid": null,
+      "photo_url": ""
+    },
+    {
+      "id": "65002",
+      "name": "Nina",
+      "class_name": "ปี2",
+      "nfc_uid": null,
+      "photo_url": ""
+    },
+    {
+      "id": "65003",
+      "name": "Boss",
+      "class_name": "ปี3",
+      "nfc_uid": null,
+      "photo_url": ""
+    },
+    {
+      "id": "65004",
+      "name": "Ploy",
+      "class_name": "ปี4",
+      "nfc_uid": null,
+      "photo_url": ""
+    },
+    {
+      "id": "68001",
+      "name": "mint",
+      "class_name": "ปี1",
+      "nfc_uid": null,
+      "photo_url": ""
+    }
+  ],
+  "users": [
+    {
+      "id": 1,
+      "username": "admin",
+      "password": "$2b$10$ESOyBrwwLf.POU5.lldWve7ePYqbG7KCufXZdoet2ohh54pUkvB.G",
+      "role": "admin",
+      "student_id": null,
+      "assigned_class": null
+    },
+    {
+      "id": 7,
+      "username": "fff",
+      "password": "$2b$10$/RUjCDxVSym9nUMmq77R8OR0zRwJmOLpwW3utpE8AMBWT3a43qBoe",
+      "role": "teacher",
+      "student_id": null,
+      "assigned_class": "ปี2"
+    },
+    {
+      "id": 9,
+      "username": "min",
+      "password": "$2b$10$Cxq85LWQMgLrA36NKJLBcuPxtlc77976awua4kSgkGStjXSa8pW5m",
+      "role": "student",
+      "student_id": "65001",
+      "assigned_class": null
+    },
+    {
+      "id": 10,
+      "username": "Nina",
+      "password": "$2b$10$7eR4P/zevXghxZgYmVxCS.5pmBJHQ1ApjC2OK228k5NVI0pUwS8T6",
+      "role": "student",
+      "student_id": "65002",
+      "assigned_class": null
+    },
+    {
+      "id": 11,
+      "username": "Boss",
+      "password": "$2b$10$wWWyaWkYhqf/doaMVQgOZ./0Hr6PC9CUV2.WaSgas0k/DHaEUyuGu",
+      "role": "student",
+      "student_id": "65003",
+      "assigned_class": null
+    },
+    {
+      "id": 12,
+      "username": "Ploy",
+      "password": "$2b$10$8q3Nqhjne7wIj7J0CnqyKuAfOTJNlseeUTBuDk3FhB6NBFwslYOBm",
+      "role": "student",
+      "student_id": "65004",
+      "assigned_class": null
+    },
+    {
+      "id": 13,
+      "username": "mmm",
+      "password": "$2b$10$bQTFvEpm74Dj6w4gz8D6yu.Sa8V9mD03XPYmlEevHbLfbjp6QimqS",
+      "role": "teacher",
+      "student_id": null,
+      "assigned_class": "ปี1"
+    }
+  ],
+  "grades": [
+    {
+      "id": 36,
+      "student_id": "65002",
+      "subject": "คณิตศาสตร์",
+      "score": 10
+    },
+    {
+      "id": 37,
+      "student_id": "65002",
+      "subject": "วิทยาศาสตร์",
+      "score": 40
+    },
+    {
+      "id": 38,
+      "student_id": "65002",
+      "subject": "ภาษาต่างประเทศ",
+      "score": 50
+    },
+    {
+      "id": 39,
+      "student_id": "65002",
+      "subject": "ศิลปะ/ความคิดสร้างสรรค์",
+      "score": 40
+    },
+    {
+      "id": 40,
+      "student_id": "65002",
+      "subject": "กีฬา/ร่างกาย",
+      "score": 70
+    }
+  ],
+  "logs": [
+    {
+      "log_id": 1,
+      "id": "65001",
+      "student_name": "Min",
+      "check_in_at": "26 เม.ย. 2569 16:16",
+      "check_in_date": "2026-04-26",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 2,
+      "id": "65002",
+      "student_name": "Nina",
+      "check_in_at": "26 เม.ย. 2569 23:59",
+      "check_in_date": "2026-04-26",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 3,
+      "id": "65001",
+      "student_name": "Min",
+      "check_in_at": "27 เม.ย. 2569 00:19",
+      "check_in_date": "2026-04-27",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 4,
+      "id": "65003",
+      "student_name": "Boss",
+      "check_in_at": "27 เม.ย. 2569 00:19",
+      "check_in_date": "2026-04-27",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 5,
+      "id": "65001",
+      "student_name": "Min",
+      "check_in_at": "30 เม.ย. 2569 13:01",
+      "check_in_date": "2026-04-30",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 6,
+      "id": "65001",
+      "student_name": "Min",
+      "check_in_at": "1 พ.ค. 2569 18:03",
+      "check_in_date": "2026-05-01",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 7,
+      "id": "65001",
+      "student_name": "Min",
+      "check_in_at": "5 พ.ค. 2569 13:57",
+      "check_in_date": "2026-05-05",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 8,
+      "id": "65002",
+      "student_name": "Nina",
+      "check_in_at": "5 พ.ค. 2569 14:41",
+      "check_in_date": "2026-05-05",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 9,
+      "id": "65003",
+      "student_name": "Boss",
+      "check_in_at": "5 พ.ค. 2569 14:41",
+      "check_in_date": "2026-05-05",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 10,
+      "id": "65004",
+      "student_name": "Ploy",
+      "check_in_at": "5 พ.ค. 2569 14:41",
+      "check_in_date": "2026-05-05",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    },
+    {
+      "log_id": 11,
+      "id": "68001",
+      "student_name": "mint",
+      "check_in_at": "5 พ.ค. 2569 14:53",
+      "check_in_date": "2026-05-05",
+      "status": "เข้าเรียน",
+      "method": "manual"
+    }
+  ]
+}
