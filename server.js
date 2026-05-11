@@ -384,6 +384,53 @@ function ensureLinkedStudent(req, res) {
   return true;
 }
 
+function buildLocalAiInsight(grades) {
+  const entries = Object.entries(grades)
+    .map(([subject, score]) => ({ subject, score: Number(score) || 0 }))
+    .sort((a, b) => b.score - a.score);
+
+  const topSubjects = entries.slice(0, 2);
+  const average = entries.reduce((sum, item) => sum + item.score, 0) / Math.max(entries.length, 1);
+  const strengths = topSubjects.map(item => item.subject);
+
+  let careers = ["ผู้ประสานงานโครงการ", "เจ้าหน้าที่ธุรการ", "นักพัฒนาทักษะทั่วไป"];
+  let explanation = "ผลคะแนนของคุณค่อนข้างสมดุลหลายด้าน เหมาะกับการต่อยอดผ่านการฝึกทักษะและการลองทำกิจกรรมหลายรูปแบบเพื่อค้นหาความถนัดที่ชัดขึ้น";
+
+  if (strengths.includes("คณิตศาสตร์") && strengths.includes("วิทยาศาสตร์")) {
+    careers = ["วิศวกร", "นักวิเคราะห์ข้อมูล", "นักพัฒนาซอฟต์แวร์"];
+    explanation = "คุณเด่นด้านการคิดเป็นระบบและการแก้ปัญหาเชิงเหตุผล จึงเหมาะกับงานที่ใช้การวิเคราะห์ ตัวเลข และการออกแบบวิธีแก้ปัญหาที่ชัดเจน";
+  } else if (strengths.includes("ภาษาต่างประเทศ") && strengths.includes("ศิลปะ/ความคิดสร้างสรรค์")) {
+    careers = ["นักการตลาดคอนเทนต์", "นักออกแบบสื่อ", "ล่ามหรือผู้ประสานงานต่างประเทศ"];
+    explanation = "คุณมีจุดแข็งด้านการสื่อสารและความคิดสร้างสรรค์ เหมาะกับงานที่ต้องใช้ภาษา การเล่าเรื่อง และการนำเสนอไอเดียให้น่าสนใจ";
+  } else if (strengths.includes("คณิตศาสตร์")) {
+    careers = ["นักบัญชี", "นักวิเคราะห์ธุรกิจ", "ผู้ช่วยวิศวกร"];
+    explanation = "คุณทำได้ดีในด้านตัวเลขและความแม่นยำ จึงเหมาะกับงานที่ต้องใช้การคำนวณ วางแผน และตรวจสอบข้อมูลอย่างเป็นระบบ";
+  } else if (strengths.includes("วิทยาศาสตร์")) {
+    careers = ["ผู้ช่วยห้องแล็บ", "สายสุขภาพเบื้องต้น", "นักวิจัยรุ่นเริ่มต้น"];
+    explanation = "คุณเด่นด้านการสังเกต ทดลอง และเข้าใจหลักการเชิงวิทยาศาสตร์ เหมาะกับสายงานที่ต้องใช้การค้นคว้าและความละเอียดรอบคอบ";
+  } else if (strengths.includes("ภาษาต่างประเทศ")) {
+    careers = ["พนักงานต้อนรับ", "เจ้าหน้าที่ประสานงาน", "ครูสอนภาษา"];
+    explanation = "คุณมีพื้นฐานการสื่อสารที่ดี เหมาะกับงานที่ต้องพบปะผู้คน ใช้ภาษา และสร้างความเข้าใจระหว่างคนหลายกลุ่ม";
+  } else if (strengths.includes("ศิลปะ/ความคิดสร้างสรรค์")) {
+    careers = ["นักออกแบบกราฟิก", "ครีเอทีฟ", "ผู้ผลิตคอนเทนต์"];
+    explanation = "คุณมีแนวโน้มเด่นด้านจินตนาการและการสร้างสรรค์ เหมาะกับงานที่ต้องคิดไอเดียใหม่และถ่ายทอดออกมาให้คนอื่นเห็นภาพ";
+  } else if (strengths.includes("กีฬา/ร่างกาย")) {
+    careers = ["ผู้ฝึกสอนกีฬา", "ผู้ช่วยกิจกรรม", "งานสายบริการที่ต้องเคลื่อนไหว"];
+    explanation = "คุณมีความพร้อมด้านร่างกายและการลงมือทำ เหมาะกับงานที่ต้องใช้พลัง ความกระตือรือร้น และการทำงานร่วมกับผู้อื่น";
+  }
+
+  if (average < 50) {
+    explanation += " ช่วงนี้คะแนนรวมยังต่ำอยู่เล็กน้อย แนะนำให้ค่อย ๆ อัปเกรดพื้นฐานวิชาหลักก่อน แล้วค่อยต่อยอดไปยังสายที่สนใจมากที่สุด";
+  } else if (average >= 80) {
+    explanation += " ภาพรวมคะแนนค่อนข้างแข็งแรงมาก จึงมีโอกาสต่อยอดสู่สายเรียนหรืออาชีพเฉพาะทางได้ดี";
+  }
+
+  return {
+    suggestion: careers.join(", "),
+    description: explanation
+  };
+}
+
 // Auth Endpoints
 app.post("/api/auth/register", async (req, res) => {
   const { username, password, role, studentId, assignedClass } = req.body;
@@ -751,14 +798,15 @@ Career: [Career 1, Career 2, Career 3]
 Explanation: [Explanation in Thai]`;
 
     let suggestion = "กำลังคิด...";
-    let description = "ไม่สามารถเชื่อมต่อ AI NUTNUT ได้";
+    let description = "AI NUTNUT กำลังเตรียมผลวิเคราะห์";
+    let usedLocalFallback = false;
 
     try {
-      const ollamaRes = await fetch("http://127.0.0.1:11434/api/generate", {
+      const ollamaRes = await fetch(process.env.OLLAMA_URL || "http://127.0.0.1:11434/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "llama3",
+          model: process.env.OLLAMA_MODEL || "llama3",
           prompt: prompt,
           stream: false
         })
@@ -773,10 +821,16 @@ Explanation: [Explanation in Thai]`;
         suggestion = careerMatch ? careerMatch[1].trim() : "หลากหลายอาชีพตามความถนัด";
         description = explanationMatch ? explanationMatch[1].trim() : text.trim();
       } else {
-        description = "AI NUTNUT ตอบกลับข้อผิดพลาด โปรดตรวจสอบว่าระบบวิเคราะห์พร้อมใช้งาน";
+        usedLocalFallback = true;
       }
     } catch (e) {
-      description = "ไม่สามารถเชื่อมต่อ AI NUTNUT ได้ กรุณาตรวจสอบว่าเซิร์ฟเวอร์วิเคราะห์ทำงานอยู่";
+      usedLocalFallback = true;
+    }
+
+    if (usedLocalFallback) {
+      const fallback = buildLocalAiInsight(grades);
+      suggestion = fallback.suggestion;
+      description = `${fallback.description} (วิเคราะห์โดย AI NUTNUT โหมดสำรอง)`;
     }
 
     res.json({ grades, suggestion, description, isMocked });
