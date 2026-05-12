@@ -15,6 +15,10 @@ const JWT_SECRET = process.env.JWT_SECRET || "nutcheck_super_secret_key_12345";
 const dataDir = process.env.DATA_DIR || __dirname;
 const uploadsDir = path.join(dataDir, "uploads");
 const DB_PATH = path.join(dataDir, "attendance.db");
+const GAS_WEB_APP_URL = String(process.env.GAS_WEB_APP_URL || "").trim();
+const GAS_API_KEY = String(process.env.GAS_API_KEY || "").trim();
+const DATA_PROVIDER = String(process.env.DATA_PROVIDER || ((GAS_WEB_APP_URL && GAS_API_KEY) ? "gas" : "sqlite")).trim().toLowerCase();
+const USE_GAS = DATA_PROVIDER === "gas";
 const adminSessions = new Map();
 
 fs.mkdirSync(dataDir, { recursive: true });
@@ -63,6 +67,57 @@ function getLanAddress() {
 function sendDbError(res, message, err) {
   console.error(message, err);
   res.status(500).json({ message });
+}
+
+async function gasRequest(action, payload = {}) {
+  if (!GAS_WEB_APP_URL || !GAS_API_KEY) {
+    throw new Error("Google Apps Script ยังไม่ได้ตั้งค่า GAS_WEB_APP_URL หรือ GAS_API_KEY");
+  }
+
+  const response = await fetch(GAS_WEB_APP_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      apiKey: GAS_API_KEY,
+      action,
+      ...payload
+    })
+  });
+
+  const json = await response.json();
+  if (!response.ok || !json.ok) {
+    throw new Error(json.message || `Google Apps Script action ${action} failed`);
+  }
+
+  return json.data;
+}
+
+async function gasListStudents(options = {}) {
+  const payload = {};
+  if (options.studentId) {
+    payload.studentId = options.studentId;
+  }
+  return gasRequest("listStudents", payload);
+}
+
+async function gasListUsers() {
+  return gasRequest("listUsers");
+}
+
+async function gasGetGrades(studentId) {
+  return gasRequest("getGrades", { studentId });
+}
+
+async function gasSaveGrades(studentId, grades) {
+  return gasRequest("saveGrades", { studentId, grades });
+}
+
+async function gasListLogs(options = {}) {
+  return gasRequest("listLogs", options);
+}
+
+async function gasAddLog(log) {
+  return gasRequest("addLog", { log });
 }
 
 function normalizeStudentPayload(payload = {}) {
@@ -130,6 +185,10 @@ function allQuery(sql, params = []) {
 }
 
 async function migrateDatabase() {
+  if (USE_GAS) {
+    return;
+  }
+
   await runQuery(`
     CREATE TABLE IF NOT EXISTS students (
       id TEXT PRIMARY KEY,
@@ -266,6 +325,11 @@ async function migrateDatabase() {
 }
 
 async function getStudentById(id) {
+  if (USE_GAS) {
+    const student = await gasRequest("getStudent", { id });
+    return student || null;
+  }
+
   return getQuery(
     `
       SELECT id, name, class_name, nfc_uid, photo_url
@@ -280,6 +344,37 @@ async function saveAttendance(student, method = "manual") {
   const now = new Date();
   const checkInAt = formatCheckInTime(now);
   const checkInDate = getLocalDateKey(now);
+
+  if (USE_GAS) {
+    const existingLogs = await gasListLogs({
+      date: checkInDate,
+      studentId: student.id,
+      limit: 1
+    });
+
+    if (existingLogs.length) {
+      return {
+        alreadyCheckedIn: true,
+        message: `🟤 ${student.name} เช็คชื่อแล้ววันนี้ (${existingLogs[0].check_in_at})`,
+        student
+      };
+    }
+
+    await gasAddLog({
+      id: student.id,
+      student_name: student.name,
+      check_in_at: checkInAt,
+      check_in_date: checkInDate,
+      status: "เข้าเรียน",
+      method
+    });
+
+    return {
+      alreadyCheckedIn: false,
+      message: `✅ ${student.name} มาแล้ว (${checkInAt})`,
+      student
+    };
+  }
 
   const existingLog = await getQuery(
     `
@@ -333,10 +428,12 @@ function authenticateToken(req, res, next) {
 
     try {
       if (user?.role === "student" && !user.studentId) {
-        const linkedUser = await getQuery(
-          `SELECT student_id FROM users WHERE id = ? OR username = ? LIMIT 1`,
-          [user.id, user.username]
-        );
+        const linkedUser = USE_GAS
+          ? (await gasListUsers()).find(item => String(item.id) === String(user.id) || String(item.username) === String(user.username))
+          : await getQuery(
+              `SELECT student_id FROM users WHERE id = ? OR username = ? LIMIT 1`,
+              [user.id, user.username]
+            );
         user.studentId = linkedUser?.student_id || null;
       }
 
@@ -438,6 +535,26 @@ app.post("/api/auth/register", async (req, res) => {
   if (!["admin", "teacher", "student"].includes(role)) return res.status(400).json({ message: "Role ไม่ถูกต้อง" });
 
   try {
+    if (USE_GAS) {
+      const users = await gasListUsers();
+      if (users.some(user => String(user.username) === String(username))) {
+        return res.status(409).json({ message: "ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await gasRequest("upsertUser", {
+        user: {
+          username,
+          password: hashedPassword,
+          role,
+          student_id: studentId || "",
+          assigned_class: assignedClass || ""
+        }
+      });
+
+      return res.status(201).json({ message: "สมัครสมาชิกสำเร็จ" });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     await runQuery(
       `INSERT INTO users (username, password, role, student_id, assigned_class) VALUES (?, ?, ?, ?, ?)`,
@@ -450,16 +567,39 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+function isBcryptHash(value) {
+  return typeof value === 'string' && /^\$2[aby]\$/.test(value);
+}
+
 app.post("/api/auth/login", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ message: "กรุณากรอก Username และ Password" });
 
   try {
-    const user = await getQuery(`SELECT * FROM users WHERE username = ?`, [username]);
-    if (!user) return res.status(401).json({ message: "Username หรือ Password ไม่ถูกต้อง" });
+    const user = USE_GAS
+      ? (await gasListUsers()).find(item => String(item.username) === String(username))
+      : await getQuery(`SELECT * FROM users WHERE username = ?`, [username]);
+    if (!user || !user.password) return res.status(401).json({ message: "Username หรือ Password ไม่ถูกต้อง" });
 
-    const isValid = await bcrypt.compare(password, user.password);
+    const isValid = isBcryptHash(user.password)
+      ? await bcrypt.compare(password, user.password)
+      : password === user.password;
+
     if (!isValid) return res.status(401).json({ message: "Username หรือ Password ไม่ถูกต้อง" });
+
+    if (USE_GAS && !isBcryptHash(user.password)) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await gasRequest("upsertUser", {
+        user: {
+          id: user.id,
+          username: user.username,
+          password: hashedPassword,
+          role: user.role,
+          student_id: user.student_id || "",
+          assigned_class: user.assigned_class || ""
+        }
+      });
+    }
 
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, studentId: user.student_id, assignedClass: user.assigned_class },
@@ -489,8 +629,10 @@ app.get("/api/auth/me", authenticateToken, (req, res) => {
 // User Management Endpoints (Admin only)
 app.get("/api/users", authenticateToken, requireRole(["admin"]), async (req, res) => {
   try {
-    const rows = await allQuery(`SELECT id, username, role, student_id, assigned_class FROM users`);
-    res.json(rows);
+    const rows = USE_GAS
+      ? await gasListUsers()
+      : await allQuery(`SELECT id, username, role, student_id, assigned_class FROM users`);
+    res.json(rows.map(({ password, ...user }) => user));
   } catch (err) {
     sendDbError(res, "โหลดผู้ใช้งานไม่สำเร็จ", err);
   }
@@ -500,6 +642,25 @@ app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, re
   const { username, password, role, studentId, assignedClass } = req.body;
   if (!username || !password || !role) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
   try {
+    if (USE_GAS) {
+      const users = await gasListUsers();
+      if (users.some(user => String(user.username) === String(username))) {
+        return res.status(409).json({ message: "ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await gasRequest("upsertUser", {
+        user: {
+          username,
+          password: hashedPassword,
+          role,
+          student_id: studentId || "",
+          assigned_class: assignedClass || ""
+        }
+      });
+      return res.status(201).json({ message: "สร้างผู้ใช้สำเร็จ" });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     await runQuery(
       `INSERT INTO users (username, password, role, student_id, assigned_class) VALUES (?, ?, ?, ?, ?)`,
@@ -516,6 +677,32 @@ app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, re
 app.put("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req, res) => {
   const { username, password, role, studentId, assignedClass } = req.body;
   try {
+    if (USE_GAS) {
+      const users = await gasListUsers();
+      const currentUser = users.find(user => String(user.id) === String(req.params.id));
+
+      if (!currentUser) {
+        return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+      }
+
+      if (users.some(user => String(user.username) === String(username) && String(user.id) !== String(req.params.id))) {
+        return res.status(409).json({ message: "ชื่อผู้ใช้นี้มีอยู่ในระบบแล้ว" });
+      }
+
+      const nextPassword = password ? await bcrypt.hash(password, 10) : currentUser.password;
+      await gasRequest("upsertUser", {
+        user: {
+          id: currentUser.id,
+          username,
+          password: nextPassword,
+          role,
+          student_id: studentId || "",
+          assigned_class: assignedClass || ""
+        }
+      });
+      return res.json({ message: "อัปเดตผู้ใช้สำเร็จ" });
+    }
+
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
       await runQuery(`UPDATE users SET username=?, password=?, role=?, student_id=?, assigned_class=? WHERE id=?`, [username, hashedPassword, role, studentId || null, assignedClass || null, req.params.id]);
@@ -532,6 +719,11 @@ app.put("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req,
 
 app.delete("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req, res) => {
   try {
+    if (USE_GAS) {
+      await gasRequest("deleteUser", { id: req.params.id });
+      return res.json({ message: "ลบผู้ใช้สำเร็จ" });
+    }
+
     await runQuery(`DELETE FROM users WHERE id=?`, [req.params.id]);
     res.json({ message: "ลบผู้ใช้สำเร็จ" });
   } catch (err) {
@@ -544,12 +736,35 @@ app.get("/api/health", (req, res) => {
     ok: true,
     host: HOST,
     port: PORT,
-    dbPath: DB_PATH
+    dbPath: DB_PATH,
+    dataProvider: DATA_PROVIDER
   });
 });
 
 app.get("/api/database/status", async (req, res) => {
   try {
+    if (USE_GAS) {
+      const [students, logs, health] = await Promise.all([
+        gasListStudents(),
+        gasListLogs({ limit: 1 }),
+        gasRequest("health")
+      ]);
+
+      return res.json({
+        ok: true,
+        database: {
+          type: "google-apps-script",
+          url: GAS_WEB_APP_URL
+        },
+        totals: {
+          students: students.length,
+          logs: Number((await gasListLogs()).length)
+        },
+        latestLog: logs[0] || null,
+        gas: health
+      });
+    }
+
     const [studentCount, logCount, latestLog] = await Promise.all([
       getQuery("SELECT COUNT(*) AS total FROM students"),
       getQuery("SELECT COUNT(*) AS total FROM logs"),
@@ -586,6 +801,19 @@ app.get("/api/students", authenticateToken, async (req, res) => {
   }
 
   try {
+    if (USE_GAS) {
+      let rows = await gasListStudents();
+
+      if (req.user.role === "student" && req.user.studentId) {
+        rows = rows.filter(row => String(row.id) === String(req.user.studentId));
+      } else if (req.user.role === "teacher" && req.user.assignedClass) {
+        rows = rows.filter(row => String(row.class_name) === String(req.user.assignedClass));
+      }
+
+      rows.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      return res.json(rows);
+    }
+
     let query = `
         SELECT id, name, class_name, nfc_uid, photo_url
         FROM students
@@ -636,6 +864,31 @@ app.post("/api/students", authenticateToken, requireRole(["admin", "teacher"]), 
   }
 
   try {
+    if (USE_GAS) {
+      const students = await gasListStudents();
+      if (students.some(item => String(item.id) === String(student.id))) {
+        return res.status(409).json({ message: "รหัสนักเรียนซ้ำในระบบ" });
+      }
+      if (student.nfcUid && students.some(item => String(item.nfc_uid || "") === String(student.nfcUid))) {
+        return res.status(409).json({ message: "UID ซ้ำในระบบ" });
+      }
+
+      await gasRequest("upsertStudent", {
+        student: {
+          id: student.id,
+          name: student.name,
+          class_name: student.className,
+          nfc_uid: student.nfcUid,
+          photo_url: student.photoUrl
+        }
+      });
+
+      return res.status(201).json({
+        message: "เพิ่มนักเรียนสำเร็จ",
+        student: await getStudentById(student.id)
+      });
+    }
+
     await runQuery(
       `
         INSERT INTO students (id, name, class_name, nfc_uid, photo_url)
@@ -674,6 +927,32 @@ app.put("/api/students/:id", authenticateToken, requireRole(["admin", "teacher"]
   }
 
   try {
+    if (USE_GAS) {
+      const students = await gasListStudents();
+      const currentStudent = students.find(item => String(item.id) === String(req.params.id));
+      if (!currentStudent) {
+        return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียน" });
+      }
+      if (student.nfcUid && students.some(item => String(item.id) !== String(req.params.id) && String(item.nfc_uid || "") === String(student.nfcUid))) {
+        return res.status(409).json({ message: "UID ซ้ำในระบบ" });
+      }
+
+      await gasRequest("upsertStudent", {
+        student: {
+          id: currentStudent.id,
+          name: student.name,
+          class_name: student.className,
+          nfc_uid: student.nfcUid,
+          photo_url: student.photoUrl
+        }
+      });
+
+      return res.json({
+        message: "อัปเดตข้อมูลนักเรียนสำเร็จ",
+        student: await getStudentById(req.params.id)
+      });
+    }
+
     const result = await runQuery(
       `
         UPDATE students
@@ -710,6 +989,11 @@ app.put("/api/students/:id", authenticateToken, requireRole(["admin", "teacher"]
 
 app.delete("/api/students/:id", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
   try {
+    if (USE_GAS) {
+      await gasRequest("deleteStudent", { id: req.params.id });
+      return res.json({ message: "ลบนักเรียนสำเร็จ" });
+    }
+
     const result = await runQuery("DELETE FROM students WHERE id = ?", [req.params.id]);
 
     if (result.changes === 0) {
@@ -726,7 +1010,9 @@ app.delete("/api/students/:id", authenticateToken, requireRole(["admin", "teache
 // Grades and AI Analysis Endpoints
 app.get("/api/students/:id/grades", authenticateToken, requireStudentSelfOrRole(["admin", "teacher"]), async (req, res) => {
   try {
-    const rows = await allQuery(`SELECT subject, score FROM grades WHERE student_id = ?`, [req.params.id]);
+    const rows = USE_GAS
+      ? await gasGetGrades(req.params.id)
+      : await allQuery(`SELECT subject, score FROM grades WHERE student_id = ?`, [req.params.id]);
     res.json(rows);
   } catch (err) {
     sendDbError(res, "โหลดเกรดไม่สำเร็จ", err);
@@ -743,6 +1029,17 @@ app.post("/api/students/:id/grades", authenticateToken, requireStudentSelfOrRole
   }
 
   try {
+    if (USE_GAS) {
+      for (const [subject, score] of Object.entries(grades)) {
+        const numericScore = Number(score);
+        if (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 100) {
+          return res.status(400).json({ message: `คะแนนวิชา ${subject} ต้องอยู่ระหว่าง 0 ถึง 100` });
+        }
+      }
+      await gasSaveGrades(studentId, grades);
+      return res.json({ message: "บันทึกคะแนนสำเร็จ" });
+    }
+
     await runQuery(`DELETE FROM grades WHERE student_id = ?`, [studentId]);
     for (const [subject, score] of Object.entries(grades)) {
       const numericScore = Number(score);
@@ -768,7 +1065,9 @@ app.get("/api/students/:id/analysis", authenticateToken, requireStudentSelfOrRol
     const student = await getStudentById(req.params.id);
     if (!student) return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียน" });
 
-    const rows = await allQuery(`SELECT subject, score FROM grades WHERE student_id = ?`, [req.params.id]);
+    const rows = USE_GAS
+      ? await gasGetGrades(req.params.id)
+      : await allQuery(`SELECT subject, score FROM grades WHERE student_id = ?`, [req.params.id]);
     let grades = {};
     rows.forEach(r => grades[r.subject] = r.score);
 
@@ -870,14 +1169,16 @@ app.post("/api/check/nfc", async (req, res) => {
   }
 
   try {
-    const student = await getQuery(
-      `
-        SELECT id, name, class_name, nfc_uid, photo_url
-        FROM students
-        WHERE nfc_uid = ?
-      `,
-      [uid]
-    );
+    const student = USE_GAS
+      ? (await gasListStudents()).find(item => String(item.nfc_uid || "") === String(uid))
+      : await getQuery(
+          `
+            SELECT id, name, class_name, nfc_uid, photo_url
+            FROM students
+            WHERE nfc_uid = ?
+          `,
+          [uid]
+        );
 
     if (!student) {
       res.status(404).json({ message: "ไม่พบบัตรนี้ในระบบ" });
@@ -900,6 +1201,28 @@ app.get("/api/logs", authenticateToken, async (req, res) => {
   const isStudent = req.user.role === "student";
   const studentId = req.user.studentId;
   const isTeacher = req.user.role === "teacher" && req.user.assignedClass;
+
+  if (USE_GAS) {
+    try {
+      let rows = await gasListLogs({ date, limit });
+
+      if (isStudent && studentId) {
+        rows = rows.filter(row => String(row.id) === String(studentId));
+      } else if (isTeacher) {
+        const students = await gasListStudents();
+        const allowedIds = new Set(
+          students
+            .filter(student => String(student.class_name) === String(req.user.assignedClass))
+            .map(student => String(student.id))
+        );
+        rows = rows.filter(row => allowedIds.has(String(row.id)));
+      }
+
+      return res.json(rows.slice(0, limit));
+    } catch (err) {
+      return sendDbError(res, "โหลดประวัติการเช็คชื่อไม่สำเร็จ", err);
+    }
+  }
 
   let query = "SELECT l.log_id, l.id, l.student_name, l.check_in_at, l.check_in_date, l.status, l.method FROM logs l";
   let params = [];
@@ -942,6 +1265,42 @@ app.get("/api/dashboard/summary", authenticateToken, async (req, res) => {
   const isTeacher = req.user.role === "teacher" && req.user.assignedClass;
 
   try {
+    if (USE_GAS) {
+      const [students, logs] = await Promise.all([
+        gasListStudents(),
+        gasListLogs({ date: today })
+      ]);
+
+      if (req.user.role === "student" && req.user.studentId) {
+        const myLogs = logs.filter(row => String(row.id) === String(req.user.studentId));
+        const hasCheckedIn = myLogs.length > 0;
+        return res.json({
+          date: today,
+          totalStudents: 1,
+          todayCheckIns: myLogs.length,
+          uniqueCheckIns: hasCheckedIn ? 1 : 0,
+          absentCount: hasCheckedIn ? 0 : 1
+        });
+      }
+
+      let filteredStudents = students;
+      let filteredLogs = logs;
+      if (isTeacher) {
+        filteredStudents = students.filter(student => String(student.class_name) === String(req.user.assignedClass));
+        const allowedIds = new Set(filteredStudents.map(student => String(student.id)));
+        filteredLogs = logs.filter(log => allowedIds.has(String(log.id)));
+      }
+
+      const uniqueIds = new Set(filteredLogs.map(log => String(log.id)));
+      return res.json({
+        date: today,
+        totalStudents: filteredStudents.length,
+        todayCheckIns: filteredLogs.length,
+        uniqueCheckIns: uniqueIds.size,
+        absentCount: Math.max(filteredStudents.length - uniqueIds.size, 0)
+      });
+    }
+
     if (req.user.role === "student" && req.user.studentId) {
       const logRow = await getQuery(
         `
@@ -1009,6 +1368,28 @@ app.get("/api/dashboard/logs", authenticateToken, async (req, res) => {
   const studentId = req.user.studentId;
   const isTeacher = req.user.role === "teacher" && req.user.assignedClass;
 
+  if (USE_GAS) {
+    try {
+      let rows = await gasListLogs({ date, limit });
+
+      if (isStudent && studentId) {
+        rows = rows.filter(row => String(row.id) === String(studentId));
+      } else if (isTeacher) {
+        const students = await gasListStudents();
+        const allowedIds = new Set(
+          students
+            .filter(student => String(student.class_name) === String(req.user.assignedClass))
+            .map(student => String(student.id))
+        );
+        rows = rows.filter(row => allowedIds.has(String(row.id)));
+      }
+
+      return res.json(rows.slice(0, limit));
+    } catch (err) {
+      return sendDbError(res, "โหลดรายการเช็คชื่อไม่สำเร็จ", err);
+    }
+  }
+
   let query = "SELECT l.log_id, l.id, l.student_name, l.check_in_at, l.check_in_date, l.status, l.method FROM logs l";
   let params = [];
 
@@ -1049,6 +1430,31 @@ app.get("/api/dashboard/students", authenticateToken, async (req, res) => {
   const isStudent = req.user.role === "student";
   const studentId = req.user.studentId;
   const isTeacher = req.user.role === "teacher" && req.user.assignedClass;
+
+  if (USE_GAS) {
+    try {
+      let students = await gasListStudents();
+      const logs = await gasListLogs({ date });
+      const presentIds = new Set(logs.map(log => String(log.id)));
+
+      if (isStudent && studentId) {
+        students = students.filter(student => String(student.id) === String(studentId));
+      } else if (isTeacher) {
+        students = students.filter(student => String(student.class_name) === String(req.user.assignedClass));
+      }
+
+      const rows = students
+        .map(student => ({
+          ...student,
+          attendanceStatus: presentIds.has(String(student.id)) ? "มาเรียน" : "ยังไม่เช็คชื่อ"
+        }))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+      return res.json(rows);
+    } catch (err) {
+      return sendDbError(res, "โหลดสถานะนักเรียนไม่สำเร็จ", err);
+    }
+  }
 
   let query = `
         SELECT
@@ -1094,6 +1500,32 @@ app.get("/api/history", authenticateToken, requireRole(["admin", "teacher"]), as
   const isTeacher = req.user.role === "teacher" && req.user.assignedClass;
 
   try {
+    if (USE_GAS) {
+      const [students, logs] = await Promise.all([
+        gasListStudents(),
+        gasListLogs({ date })
+      ]);
+
+      let filteredStudents = students;
+      let filteredLogs = logs;
+
+      if (isTeacher) {
+        filteredStudents = students.filter(student => String(student.class_name) === String(req.user.assignedClass));
+        const allowedIds = new Set(filteredStudents.map(student => String(student.id)));
+        filteredLogs = logs.filter(log => allowedIds.has(String(log.id)));
+      }
+
+      const uniqueIds = new Set(filteredLogs.map(log => String(log.id)));
+      return res.json({
+        date,
+        summary: {
+          totalCheckIns: filteredLogs.length,
+          uniqueCheckIns: uniqueIds.size
+        },
+        logs: filteredLogs
+      });
+    }
+
     let summaryQuery = `
           SELECT COUNT(*) AS totalCheckIns,
                  COUNT(DISTINCT l.id) AS uniqueCheckIns
