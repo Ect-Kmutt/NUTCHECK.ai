@@ -481,8 +481,18 @@ if (studentForm) {
         }
         throw new Error(errorMsg);
       }
+
+      const result = await res.json();
       modal.style.display = 'none';
-      loadDashboard();
+      
+      // Show success message with student name
+      const studentName = document.getElementById('stuName').value;
+      showSuccess(`${isEdit ? 'แก้ไข' : 'เพิ่ม'}นักเรียน ${studentName} สำเร็จ`);
+      
+      // Wait a moment before reloading to ensure database is committed
+      setTimeout(() => {
+        loadDashboard();
+      }, 500);
     } catch (err) { showError('เกิดข้อผิดพลาด: ' + err.message); }
   });
 }
