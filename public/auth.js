@@ -12,18 +12,21 @@ document.addEventListener('DOMContentLoaded', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password })
         });
-        
+
         const data = await response.json();
         if (response.ok) {
           localStorage.setItem('nutcheck_token', data.token);
           localStorage.setItem('nutcheck_user', JSON.stringify(data.user));
-          window.location.href = '/dashboard.html';
+          showSuccess('เข้าสู่ระบบสำเร็จ กำลังเปลี่ยนหน้า...', 2000);
+          setTimeout(() => {
+            window.location.href = '/dashboard.html';
+          }, 1000);
         } else {
-          alert(data.message || 'ล็อกอินไม่สำเร็จ');
+          showError(data.message || 'ล็อกอินไม่สำเร็จ');
         }
       } catch (err) {
         console.error(err);
-        alert('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
+        showError('เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์');
       }
     });
   }

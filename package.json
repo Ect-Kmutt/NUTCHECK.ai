@@ -9,7 +9,9 @@
     "start:local": "HOST=127.0.0.1 node server.js",
     "start:public": "HOST=0.0.0.0 node server.js",
     "share:cloudflare": "./share-cloudflare.sh",
-    "export:gas": "node scripts/export-gas-snapshot.js"
+    "export:gas": "node scripts/export-gas-snapshot.js",
+    "test:gas": "node scripts/test-gas.js",
+    "import:gas": "node scripts/import-gas-snapshot.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

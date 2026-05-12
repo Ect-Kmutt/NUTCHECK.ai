@@ -23,7 +23,17 @@ const adminSessions = new Map();
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadsDir, { recursive: true });
-const db = new sqlite3.Database(DB_PATH);
+
+console.log(`📁 Data directory: ${dataDir}`);
+console.log(`💾 Database path: ${DB_PATH}`);
+
+const db = new sqlite3.Database(DB_PATH, (err) => {
+  if (err) {
+    console.error('❌ Database connection error:', err);
+    process.exit(1);
+  }
+  console.log('✅ Database connected successfully');
+});
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -31,6 +41,8 @@ app.use(express.static(path.join(__dirname, "public")));
 
 db.serialize(() => {
   db.run("PRAGMA foreign_keys = ON");
+  db.run("PRAGMA synchronous = FULL");
+  db.run("PRAGMA journal_mode = WAL");
 });
 
 function getLocalDateKey(date = new Date()) {
@@ -226,6 +238,31 @@ async function migrateDatabase() {
       score INTEGER NOT NULL,
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
       UNIQUE(student_id, subject)
+    )
+  `);
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS announcements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      target_audience TEXT DEFAULT 'all', -- 'all', 'students', 'teachers', or specific class
+      target_class TEXT, -- specific class if target_audience is 'student'
+      created_by INTEGER NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )
+  `);
+
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS announcement_reads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      announcement_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      read_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (announcement_id) REFERENCES announcements(id),
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      UNIQUE(announcement_id, user_id)
     )
   `);
 
@@ -1562,6 +1599,193 @@ app.get("/api/history", authenticateToken, requireRole(["admin", "teacher"]), as
   }
 });
 
+// Announcements API
+app.get("/api/announcements", authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+    let query = `
+      SELECT a.id, a.title, a.content, a.target_audience, a.created_at,
+             u.username as created_by_name
+      FROM announcements a
+      JOIN users u ON a.created_by = u.id
+    `;
+    let params = [];
+
+    // Filter announcements based on user role and target audience
+    if (user.role === "student") {
+      query += " WHERE (a.target_audience = 'all' OR a.target_audience = 'students'";
+      if (user.studentId) {
+        // Get student's class for class-specific announcements
+        const student = await getStudentById(user.studentId);
+        if (student?.class_name) {
+          query += " OR a.target_audience = ?";
+          params.push(student.class_name);
+        }
+      }
+      query += ")";
+    } else if (user.role === "teacher" && user.assignedClass) {
+      query += " WHERE (a.target_audience = 'all' OR a.target_audience = 'teachers' OR a.target_audience = ?)";
+      params.push(user.assignedClass);
+    }
+    // Admin can see all announcements
+
+    query += " ORDER BY a.created_at DESC LIMIT 50";
+
+    const announcements = await allQuery(`
+      SELECT a.*,
+             u.username as created_by_name,
+             CASE WHEN ar.read_at IS NULL THEN 1 ELSE 0 END as is_new
+      FROM announcements a
+      LEFT JOIN users u ON a.created_by = u.id
+      LEFT JOIN announcement_reads ar ON a.id = ar.announcement_id AND ar.user_id = ?
+      ${query}
+    `, [req.user.id, ...params]);
+    res.json(announcements);
+  } catch (err) {
+    sendDbError(res, "โหลดประกาศไม่สำเร็จ", err);
+  }
+});
+
+app.post("/api/announcements", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  const { title, content, targetAudience } = req.body;
+
+  if (!title || !content) {
+    return res.status(400).json({ message: "กรุณากรอกหัวข้อและเนื้อหาประกาศ" });
+  }
+
+  try {
+    const result = await runQuery(
+      `INSERT INTO announcements (title, content, target_audience, created_by) VALUES (?, ?, ?, ?)`,
+      [title, content, targetAudience || "all", req.user.id]
+    );
+
+    res.status(201).json({
+      message: "สร้างประกาศสำเร็จ",
+      id: result.lastID
+    });
+  } catch (err) {
+    sendDbError(res, "สร้างประกาศไม่สำเร็จ", err);
+  }
+});
+
+app.delete("/api/announcements/:id", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  const announcementId = Number(req.params.id);
+
+  try {
+    // Check if user can delete this announcement (only creator or admin)
+    const announcement = await getQuery(
+      "SELECT created_by FROM announcements WHERE id = ?",
+      [announcementId]
+    );
+
+    if (!announcement) {
+      return res.status(404).json({ message: "ไม่พบประกาศนี้" });
+    }
+
+    if (req.user.role !== "admin" && announcement.created_by !== req.user.id) {
+      return res.status(403).json({ message: "คุณไม่มีสิทธิ์ลบประกาศนี้" });
+    }
+
+    await runQuery("DELETE FROM announcements WHERE id = ?", [announcementId]);
+    res.json({ message: "ลบประกาศสำเร็จ" });
+  } catch (err) {
+    sendDbError(res, "ลบประกาศไม่สำเร็จ", err);
+  }
+});
+
+// Mark announcement as read API
+app.post("/api/announcements/:id/read", authenticateToken, async (req, res) => {
+  try {
+    const announcementId = req.params.id;
+
+    // Check if announcement exists and user can see it
+    const announcement = await getQuery(`
+      SELECT a.*, u.role as user_role, u.assigned_class
+      FROM announcements a
+      JOIN users u ON u.id = ?
+      WHERE a.id = ?
+    `, [req.user.id, announcementId]);
+
+    if (!announcement) {
+      return res.status(404).json({ message: "ไม่พบประกาศ" });
+    }
+
+    // Check permissions
+    if (req.user.role === 'student') {
+      if (announcement.target_audience === 'teachers') {
+        return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงประกาศนี้" });
+      }
+      if (announcement.target_audience === 'student' && announcement.target_class) {
+        const studentClass = await getQuery("SELECT class_name FROM students WHERE id = ?", [req.user.studentId]);
+        if (!studentClass || studentClass.class_name !== announcement.target_class) {
+          return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงประกาศนี้" });
+        }
+      }
+    }
+
+    // Mark as read
+    await runQuery(`
+      INSERT OR REPLACE INTO announcement_reads (announcement_id, user_id, read_at)
+      VALUES (?, ?, datetime('now'))
+    `, [announcementId, req.user.id]);
+
+    res.json({ message: "ทำเครื่องหมายว่าอ่านแล้ว" });
+  } catch (err) {
+    sendDbError(res, "ทำเครื่องหมายไม่สำเร็จ", err);
+  }
+});
+app.post("/api/notifications/send-absent-reminders", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message || message.trim().length === 0) {
+      return res.status(400).json({ message: "กรุณาระบุข้อความแจ้งเตือน" });
+    }
+
+    // Get today's absent students
+    const today = new Date().toISOString().split('T')[0];
+    const absentStudents = await allQuery(`
+      SELECT s.id, s.name, s.class_name, u.username as teacher_username
+      FROM students s
+      LEFT JOIN check_ins c ON s.id = c.student_id AND DATE(c.check_in_at) = ?
+      LEFT JOIN users u ON u.student_id = s.id
+      WHERE c.student_id IS NULL
+      ORDER BY s.class_name, s.name
+    `, [today]);
+
+    if (absentStudents.length === 0) {
+      return res.status(200).json({ message: "ไม่มีนักเรียนขาดเรียนวันนี้", sent: 0 });
+    }
+
+    // Create announcements for absent students
+    const announcements = absentStudents.map(student => ({
+      title: `แจ้งเตือนการขาดเรียน - ${student.name}`,
+      content: `${message}\n\nนักเรียน: ${student.name}\nชั้น: ${student.class_name}\nวันที่: ${new Date().toLocaleDateString('th-TH')}`,
+      target_audience: 'student',
+      target_class: student.class_name,
+      created_by: req.user.id
+    }));
+
+    // Insert announcements
+    for (const announcement of announcements) {
+      await runQuery(
+        `INSERT INTO announcements (title, content, target_audience, target_class, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+        [announcement.title, announcement.content, announcement.target_audience, announcement.target_class, announcement.created_by]
+      );
+    }
+
+    res.json({
+      message: `ส่งการแจ้งเตือนสำเร็จให้ ${absentStudents.length} คน`,
+      sent: absentStudents.length,
+      students: absentStudents.map(s => ({ id: s.id, name: s.name, class: s.class_name }))
+    });
+
+  } catch (err) {
+    sendDbError(res, "ส่งการแจ้งเตือนไม่สำเร็จ", err);
+  }
+});
+
 migrateDatabase()
   .then(() => {
     app.listen(PORT, HOST, () => {
@@ -1571,9 +1795,86 @@ migrateDatabase()
       if (lanAddress) {
         console.log(`Share on your Wi-Fi: http://${lanAddress}:${PORT}`);
       }
+
+      // Schedule automatic absent reminders at 8:00 AM daily
+      scheduleAbsentReminders();
     });
   })
   .catch((err) => {
     console.error("Database migration failed", err);
     process.exit(1);
   });
+
+// Schedule automatic absent reminders
+function scheduleAbsentReminders() {
+  const now = new Date();
+  const targetTime = new Date();
+  targetTime.setHours(8, 0, 0, 0); // 8:00 AM
+
+  // If it's already past 8 AM today, schedule for tomorrow
+  if (now > targetTime) {
+    targetTime.setDate(targetTime.getDate() + 1);
+  }
+
+  const timeUntilTarget = targetTime - now;
+
+  setTimeout(() => {
+    sendAutomaticAbsentReminders();
+    // Schedule next reminder for tomorrow
+    setInterval(sendAutomaticAbsentReminders, 24 * 60 * 60 * 1000); // 24 hours
+  }, timeUntilTarget);
+
+  console.log(`Automatic absent reminders scheduled for ${targetTime.toLocaleString()}`);
+}
+
+async function sendAutomaticAbsentReminders() {
+  try {
+    console.log('Sending automatic absent reminders...');
+
+    // Get yesterday's absent students (since reminders are sent in the morning)
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    const absentStudents = await allQuery(`
+      SELECT s.id, s.name, s.class_name
+      FROM students s
+      LEFT JOIN check_ins c ON s.id = c.student_id AND DATE(c.check_in_at) = ?
+      WHERE c.student_id IS NULL
+      ORDER BY s.class_name, s.name
+    `, [yesterdayStr]);
+
+    if (absentStudents.length === 0) {
+      console.log('No absent students yesterday, skipping reminders');
+      return;
+    }
+
+    // Create automatic announcements for absent students
+    const message = `เรียนนักเรียนที่ขาดเรียนเมื่อวาน (${yesterday.toLocaleDateString('th-TH')}) กรุณาแจ้งเหตุผลการขาดเรียนให้ครูทราบโดยเร็วที่สุด และเตรียมตัวมาเรียนให้ครบถ้วน`;
+
+    // Get admin user for creating announcements
+    const adminUser = await getQuery("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+    if (!adminUser) {
+      console.error('No admin user found for automatic reminders');
+      return;
+    }
+
+    for (const student of absentStudents) {
+      await runQuery(
+        `INSERT INTO announcements (title, content, target_audience, target_class, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+        [
+          `แจ้งเตือนการขาดเรียน - ${student.name}`,
+          `${message}\n\nนักเรียน: ${student.name}\nชั้น: ${student.class_name}\nวันที่ขาด: ${yesterday.toLocaleDateString('th-TH')}`,
+          'student',
+          student.class_name,
+          adminUser.id
+        ]
+      );
+    }
+
+    console.log(`Sent automatic reminders to ${absentStudents.length} absent students`);
+  } catch (error) {
+    console.error('Error sending automatic absent reminders:', error);
+  }
+}

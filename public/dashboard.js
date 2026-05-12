@@ -114,9 +114,9 @@ async function loadDashboard() {
     if (summaryResponse.status === 403) {
       try {
         const data = await summaryResponse.json();
-        alert(data.message || "บัญชีนี้ยังไม่พร้อมใช้งานหน้า dashboard");
+        showError(data.message || "บัญชีนี้ยังไม่พร้อมใช้งานหน้า dashboard");
       } catch (error) {
-        alert("บัญชีนี้ยังไม่พร้อมใช้งานหน้า dashboard");
+        showError("บัญชีนี้ยังไม่พร้อมใช้งานหน้า dashboard");
       }
     }
     localStorage.removeItem('nutcheck_token');
@@ -146,6 +146,7 @@ async function loadDashboard() {
 
   populateClassFilter();
   renderTables(isAdminOrTeacher);
+  updateTeacherButtonsVisibility();
 
   if (!isAdminOrTeacher && currentUser?.studentId) {
     const myStudent = allStudents.find(student => student.id === currentUser.studentId);
@@ -156,6 +157,13 @@ async function loadDashboard() {
   } else {
     const panel = document.getElementById("studentFocusPanel");
     if (panel) panel.style.display = "none";
+  }
+
+  // Show notification for absent students if teacher/admin
+  if (isAdminOrTeacher && summary.absentCount > 0) {
+    setTimeout(() => {
+      showError(`มีนักเรียนขาดเรียน ${summary.absentCount} คนวันนี้ ควรส่งการแจ้งเตือน`, 8000);
+    }, 2000);
   }
 }
 
@@ -226,7 +234,7 @@ function renderTables(isAdminOrTeacher) {
             }
             loadDashboard();
           } catch (err) {
-            alert('ลบไม่สำเร็จ: ' + err.message);
+            showError('ลบไม่สำเร็จ: ' + err.message);
           }
         }
       });
@@ -400,7 +408,7 @@ if (userForm) {
       }
       userModal.style.display = 'none';
       loadUsers();
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    } catch (err) { showError('เกิดข้อผิดพลาด: ' + err.message); }
   });
 }
 
@@ -475,12 +483,12 @@ if (studentForm) {
       }
       modal.style.display = 'none';
       loadDashboard();
-    } catch (err) { alert('เกิดข้อผิดพลาด: ' + err.message); }
+    } catch (err) { showError('เกิดข้อผิดพลาด: ' + err.message); }
   });
 }
 
 document.getElementById("refreshDashboard").addEventListener("click", () => {
-  loadDashboard().catch(() => alert("โหลด dashboard ไม่สำเร็จ"));
+  loadDashboard().catch(() => showError("โหลด dashboard ไม่สำเร็จ"));
 });
 
 const logoutBtn = document.getElementById('logoutBtn');
@@ -492,4 +500,301 @@ if (logoutBtn) {
   });
 }
 
-loadDashboard().catch(() => alert("โหลด dashboard ไม่สำเร็จ"));
+loadDashboard().catch(() => showError("โหลด dashboard ไม่สำเร็จ"));
+
+// Announcements functionality
+let allAnnouncements = [];
+
+async function loadAnnouncements() {
+  const token = localStorage.getItem('nutcheck_token');
+  const userStr = localStorage.getItem('nutcheck_user');
+  let isAdminOrTeacher = false;
+  if (userStr) {
+    const user = JSON.parse(userStr);
+    isAdminOrTeacher = user.role === 'admin' || user.role === 'teacher';
+  }
+
+  try {
+    const response = await fetch('/api/announcements', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!response.ok) {
+      throw new Error('โหลดประกาศไม่สำเร็จ');
+    }
+
+    const newAnnouncements = await response.json();
+    const previousCount = allAnnouncements.filter(a => a.is_new).length;
+    const newCount = newAnnouncements.filter(a => a.is_new).length;
+
+    allAnnouncements = newAnnouncements;
+    renderAnnouncements(isAdminOrTeacher);
+
+    // Update notification badge
+    const newCount = allAnnouncements.filter(a => a.is_new).length;
+    const badge = document.getElementById('newAnnouncementsBadge');
+    if (badge) {
+      if (newCount > 0) {
+        badge.textContent = newCount > 99 ? '99+' : newCount;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // Show notification for new announcements (for students)
+    if (!isAdminOrTeacher && newCount > previousCount && previousCount >= 0) {
+      const newAnnouncementCount = newCount - previousCount;
+      if (newAnnouncementCount > 0) {
+        setTimeout(() => {
+          showSuccess(`มีประกาศใหม่ ${newAnnouncementCount} รายการ คลิกเพื่ออ่าน`, 5000);
+        }, 1000);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading announcements:', error);
+    document.getElementById('announcementsList').innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: #dc2626;">
+        โหลดประกาศไม่สำเร็จ: ${error.message}
+      </div>
+    `;
+  }
+}
+
+function renderAnnouncements(isAdminOrTeacher) {
+  const container = document.getElementById('announcementsList');
+  const addBtn = document.getElementById('addAnnouncementBtn');
+
+  if (addBtn) {
+    addBtn.style.display = isAdminOrTeacher ? 'inline-block' : 'none';
+  }
+
+  if (!allAnnouncements.length) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2rem; color: #6b7280;">
+        ยังไม่มีประกาศจากครู
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = allAnnouncements.map(announcement => `
+    <div class="announcement-item ${announcement.is_new ? 'new' : ''}" data-id="${announcement.id}">
+      <h3 class="announcement-title">${announcement.title}</h3>
+      <p class="announcement-content">${announcement.content}</p>
+      <p class="announcement-meta">
+        โดย ${announcement.created_by_name} • ${new Date(announcement.created_at).toLocaleString('th-TH')}
+      </p>
+      ${isAdminOrTeacher ? `
+        <div class="announcement-actions">
+          <button class="delete-btn" data-id="${announcement.id}" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">ลบ</button>
+        </div>
+      ` : ''}
+    </div>
+  `).join('');
+
+  // Mark announcements as read when clicked (for students)
+  if (!isAdminOrTeacher) {
+    document.querySelectorAll('.announcement-item.new').forEach(item => {
+      item.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('delete-btn')) return; // Don't mark as read when clicking delete
+
+        const announcementId = item.dataset.id;
+        try {
+          const token = localStorage.getItem('nutcheck_token');
+          await fetch(`/api/announcements/${announcementId}/read`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          item.classList.remove('new');
+        } catch (error) {
+          console.error('Failed to mark announcement as read:', error);
+        }
+      });
+    });
+  }
+
+  // Add delete event listeners
+  if (isAdminOrTeacher) {
+    document.querySelectorAll('.announcement-actions .delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.target.dataset.id;
+        if (confirm('คุณต้องการลบประกาศนี้ใช่หรือไม่?')) {
+          try {
+            const token = localStorage.getItem('nutcheck_token');
+            const response = await fetch(`/api/announcements/${id}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) {
+              throw new Error('ลบประกาศไม่สำเร็จ');
+            }
+
+            showSuccess('ลบประกาศสำเร็จ');
+            loadAnnouncements();
+          } catch (error) {
+            showError('ลบประกาศไม่สำเร็จ: ' + error.message);
+          }
+        }
+      });
+    });
+  }
+}
+
+// Announcement Modal
+const announcementModal = document.createElement('div');
+announcementModal.id = 'announcementModal';
+announcementModal.className = 'modal';
+announcementModal.innerHTML = `
+  <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-header">
+      <h2 id="announcementModalTitle">เพิ่มประกาศ</h2>
+      <button id="closeAnnouncementModalBtn" class="close-btn">&times;</button>
+    </div>
+    <form id="announcementForm">
+      <div class="form-group">
+        <label for="announcementTitle">หัวข้อประกาศ</label>
+        <input type="text" id="announcementTitle" required maxlength="100">
+      </div>
+      <div class="form-group">
+        <label for="announcementContent">เนื้อหาประกาศ</label>
+        <textarea id="announcementContent" required maxlength="500" rows="4"></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="cancelAnnouncementBtn" class="secondary-button">ยกเลิก</button>
+        <button type="submit" class="primary-button">บันทึก</button>
+      </div>
+    </form>
+  </div>
+`;
+document.body.appendChild(announcementModal);
+
+function openAnnouncementModal() {
+  document.getElementById('announcementModalTitle').textContent = 'เพิ่มประกาศ';
+  document.getElementById('announcementTitle').value = '';
+  document.getElementById('announcementContent').value = '';
+  announcementModal.style.display = 'flex';
+}
+
+document.getElementById('addAnnouncementBtn').addEventListener('click', openAnnouncementModal);
+
+document.getElementById('closeAnnouncementModalBtn').addEventListener('click', () => {
+  announcementModal.style.display = 'none';
+});
+
+document.getElementById('cancelAnnouncementBtn').addEventListener('click', () => {
+  announcementModal.style.display = 'none';
+});
+
+announcementModal.addEventListener('click', (e) => {
+  if (e.target === announcementModal) {
+    announcementModal.style.display = 'none';
+  }
+});
+
+document.getElementById('announcementForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const title = document.getElementById('announcementTitle').value.trim();
+  const content = document.getElementById('announcementContent').value.trim();
+
+  if (!title || !content) {
+    showError('กรุณากรอกหัวข้อและเนื้อหาประกาศ');
+    return;
+  }
+
+  try {
+    const token = localStorage.getItem('nutcheck_token');
+    const response = await fetch('/api/announcements', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ title, content })
+    });
+
+    if (!response.ok) {
+      throw new Error('เพิ่มประกาศไม่สำเร็จ');
+    }
+
+    showSuccess('เพิ่มประกาศสำเร็จ');
+    announcementModal.style.display = 'none';
+    loadAnnouncements();
+  } catch (error) {
+    showError('เพิ่มประกาศไม่สำเร็จ: ' + error.message);
+  }
+});
+
+// Load announcements when dashboard loads
+document.addEventListener('DOMContentLoaded', () => {
+  loadAnnouncements();
+});
+
+// Send absent reminders functionality
+document.getElementById('sendAbsentRemindersBtn').addEventListener('click', async () => {
+  const message = prompt('กรุณาป้อนข้อความแจ้งเตือนสำหรับนักเรียนที่ขาดเรียน:', 'เรียนนักเรียนที่ขาดเรียนวันนี้ กรุณาแจ้งเหตุผลการขาดเรียนให้ครูทราบโดยเร็วที่สุด');
+
+  if (!message || message.trim().length === 0) {
+    return;
+  }
+
+  if (!confirm(`คุณต้องการส่งการแจ้งเตือนไปยังนักเรียนที่ขาดเรียนวันนี้หรือไม่?\n\nข้อความ: "${message}"`)) {
+    return;
+  }
+
+  try {
+    const token = localStorage.getItem('nutcheck_token');
+    const response = await fetch('/api/notifications/send-absent-reminders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ message })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'ส่งการแจ้งเตือนไม่สำเร็จ');
+    }
+
+    const result = await response.json();
+    showSuccess(result.message);
+
+    // Reload announcements to show the new reminders
+    loadAnnouncements();
+
+  } catch (error) {
+    showError('ส่งการแจ้งเตือนไม่สำเร็จ: ' + error.message);
+  }
+});
+
+// Show/hide teacher-only buttons based on user role
+function updateTeacherButtonsVisibility() {
+  const userStr = localStorage.getItem('nutcheck_user');
+  if (userStr) {
+    const user = JSON.parse(userStr);
+    const isTeacherOrAdmin = user.role === 'admin' || user.role === 'teacher';
+    const btn = document.getElementById('sendAbsentRemindersBtn');
+
+    if (isTeacherOrAdmin) {
+      btn.style.display = 'inline-block';
+      // Update button text with absent count
+      const absentCount = document.getElementById('absentCount').textContent;
+      if (absentCount && absentCount !== '0') {
+        btn.textContent = `แจ้งเตือนขาดเรียน (${absentCount} คน)`;
+      } else {
+        btn.textContent = 'แจ้งเตือนขาดเรียน';
+      }
+    } else {
+      btn.style.display = 'none';
+    }
+  }
+}
+
+// Call this when dashboard loads
+document.addEventListener('DOMContentLoaded', () => {
+  updateTeacherButtonsVisibility();
+});

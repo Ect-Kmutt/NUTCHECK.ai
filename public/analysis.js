@@ -192,7 +192,7 @@ if (gradesForm) {
       if (!res.ok) throw new Error("บันทึกคะแนนไม่สำเร็จ");
       await loadAiAnalysis(id);
     } catch(err) {
-      alert(err.message);
+      showError(err.message);
     }
   });
 }

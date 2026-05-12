@@ -83,19 +83,23 @@ curl -X POST "YOUR_WEB_APP_URL" \
 
 ### 7. import ข้อมูล snapshot เข้า Google Sheets
 
+ใช้สคริปต์ที่เตรียมไว้ให้ได้เลย:
+
 ```bash
-curl -X POST "YOUR_WEB_APP_URL" \
-  -H "Content-Type: application/json" \
-  --data-binary @- <<'EOF'
-{
-  "apiKey": "nutcheck-secret-2026",
-  "action": "importSnapshot",
-  "snapshot": REPLACE_WITH_JSON
-}
-EOF
+cd "/Users/machd/Nutcheck"
+GAS_WEB_APP_URL="YOUR_WEB_APP_URL" \
+GAS_API_KEY="nutcheck-secret-2026" \
+npm run import:gas
 ```
 
-ง่ายที่สุดคือเปิดไฟล์ `nutcheck-snapshot.json` แล้ววางค่า object ทั้งก้อนลงในฟิลด์ `snapshot`
+## 7.1 ทดสอบว่า GAS ตอบกลับได้จริง
+
+```bash
+cd "/Users/machd/Nutcheck"
+GAS_WEB_APP_URL="YOUR_WEB_APP_URL" \
+GAS_API_KEY="nutcheck-secret-2026" \
+npm run test:gas
+```
 
 ## endpoint actions ที่มีให้
 
@@ -122,9 +126,38 @@ EOF
 
 ตอนนี้ฉันทำให้ `ฝั่ง Google Apps Script พร้อมรับข้อมูล` แล้ว
 
-สิ่งที่ยังไม่ได้สลับให้โดยอัตโนมัติ:
+สถานะตอนนี้:
 
-- [server.js](/Users/machd/Nutcheck/server.js) ยังใช้ SQLite โดยตรงอยู่
+- [server.js](/Users/machd/Nutcheck/server.js) รองรับทั้ง `SQLite` และ `Google Apps Script`
+- ถ้าไม่ตั้ง env เพิ่ม ระบบจะยังใช้ `SQLite` ตามเดิม
+
+## 8. สลับ NutCheck ให้ใช้ Google Apps Script จริง
+
+เพิ่ม environment variables เหล่านี้ในเครื่องหรือบน Render:
+
+- `DATA_PROVIDER=gas`
+- `GAS_WEB_APP_URL=URL ของ Web App ที่ deploy แล้ว`
+- `GAS_API_KEY=ค่าเดียวกับ NUTCHECK_API_KEY ใน Apps Script`
+
+ตัวอย่างตอนรัน local:
+
+```bash
+DATA_PROVIDER=gas \
+GAS_WEB_APP_URL="YOUR_WEB_APP_URL" \
+GAS_API_KEY="nutcheck-secret-2026" \
+node server.js
+```
+
+หรือคัดลอกจากไฟล์ [/.env.gas.example](/Users/machd/Nutcheck/.env.gas.example) แล้วแทนค่าจริงของคุณ
+
+เมื่อเปิดโหมดนี้ `server.js` จะอ่านข้อมูลหลักจาก Google Sheets ผ่าน Apps Script สำหรับ:
+
+- login / users
+- students
+- grades
+- check-in logs
+- dashboard summary
+- history
 
 ถ้าต้องการก้าวต่อไป ฉันแนะนำ 2 ทาง:
 
