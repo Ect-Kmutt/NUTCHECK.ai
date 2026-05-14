@@ -31,3 +31,28 @@ ON logs(check_in_date);
 
 CREATE INDEX IF NOT EXISTS idx_logs_student_date
 ON logs(id, check_in_date);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'student',
+  student_id TEXT,
+  assigned_class TEXT DEFAULT '',
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS grades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  score REAL NOT NULL,
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+  UNIQUE(student_id, subject)
+);
+
+CREATE INDEX IF NOT EXISTS idx_grades_student_id
+ON grades(student_id);
+
+CREATE INDEX IF NOT EXISTS idx_users_username
+ON users(username);

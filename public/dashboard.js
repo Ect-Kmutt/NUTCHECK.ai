@@ -138,14 +138,19 @@ async function loadDashboard() {
 
   setStudentSummaryLabels(!isAdminOrTeacher);
 
+  console.log('Setting stats:', { totalStudents: summary.totalStudents, todayCheckIns: summary.todayCheckIns });
+  
   document.getElementById("totalStudents").textContent = summary.totalStudents;
   document.getElementById("todayCheckIns").textContent = summary.todayCheckIns;
   document.getElementById("uniqueCheckIns").textContent = summary.uniqueCheckIns;
   document.getElementById("absentCount").textContent = summary.absentCount;
   document.getElementById("dashboardDate").textContent = `อัปเดตข้อมูลวันที่ ${summary.date}`;
 
+  console.log('Populating class filter, allStudents:', allStudents?.length);
   populateClassFilter();
+  console.log('Rendering tables...');
   renderTables(isAdminOrTeacher);
+  console.log('Updating teacher buttons');
   updateTeacherButtonsVisibility();
 
   if (!isAdminOrTeacher && currentUser?.studentId) {
@@ -510,7 +515,10 @@ if (logoutBtn) {
   });
 }
 
-loadDashboard().catch(() => showError("โหลด dashboard ไม่สำเร็จ"));
+loadDashboard().catch(err => {
+  console.error('loadDashboard error:', err);
+  showError("โหลด dashboard ไม่สำเร็จ: " + err.message);
+});
 
 // Announcements functionality
 let allAnnouncements = [];
@@ -541,7 +549,6 @@ async function loadAnnouncements() {
     renderAnnouncements(isAdminOrTeacher);
 
     // Update notification badge
-    const newCount = allAnnouncements.filter(a => a.is_new).length;
     const badge = document.getElementById('newAnnouncementsBadge');
     if (badge) {
       if (newCount > 0) {

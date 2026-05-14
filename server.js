@@ -291,6 +291,23 @@ async function migrateDatabase() {
     }
   }
 
+  // Add indexes for faster queries
+  const indexes = [
+    "CREATE INDEX IF NOT EXISTS idx_logs_date ON logs(check_in_date)",
+    "CREATE INDEX IF NOT EXISTS idx_logs_id ON logs(id)",
+    "CREATE INDEX IF NOT EXISTS idx_logs_date_id ON logs(check_in_date, id)",
+    "CREATE INDEX IF NOT EXISTS idx_students_class ON students(class_name)",
+    "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)"
+  ];
+
+  for (const indexSql of indexes) {
+    try {
+      await runQuery(indexSql);
+    } catch (err) {
+      // Index might already exist, that's fine
+    }
+  }
+
   const logColumns = [
     ["method", "TEXT DEFAULT 'manual'"]
   ];
@@ -358,6 +375,55 @@ async function migrateDatabase() {
         student
       );
     }
+
+    // Add sample grades for students
+    const sampleGrades = [
+      ["65001", "คณิตศาสตร์", 85],
+      ["65001", "วิทยาศาสตร์", 78],
+      ["65001", "ภาษาไทย", 90],
+      ["65002", "คณิตศาสตร์", 92],
+      ["65002", "วิทยาศาสตร์", 88],
+      ["65002", "ภาษาไทย", 85],
+      ["65003", "คณิตศาสตร์", 75],
+      ["65003", "วิทยาศาสตร์", 80],
+      ["65003", "ภาษาไทย", 88],
+      ["65004", "คณิตศาสตร์", 88],
+      ["65004", "วิทยาศาสตร์", 92],
+      ["65004", "ภาษาไทย", 91]
+    ];
+
+    for (const [studentId, subject, score] of sampleGrades) {
+      try {
+        await runQuery(
+          `INSERT INTO grades (student_id, subject, score) VALUES (?, ?, ?)`,
+          [studentId, subject, score]
+        );
+      } catch (err) {
+        // Ignore duplicates
+      }
+    }
+  }
+
+  // Add default teacher if no non-admin users exist
+  const teacherCountRow = await getQuery("SELECT COUNT(*) AS count FROM users WHERE role = 'teacher'");
+  if ((teacherCountRow?.count || 0) === 0) {
+    const teacherPasswordHash = await bcrypt.hash("teacher123", 10);
+    await runQuery(
+      `INSERT INTO users (username, password, role, assigned_class) VALUES (?, ?, ?, ?)`,
+      ["teacher1", teacherPasswordHash, "teacher", ""]
+    );
+    console.log('✅ Default teacher created: username=teacher1, password=teacher123');
+  }
+
+  // Add default student if no student users exist
+  const studentUserCountRow = await getQuery("SELECT COUNT(*) AS count FROM users WHERE role = 'student'");
+  if ((studentUserCountRow?.count || 0) === 0) {
+    const studentPasswordHash = await bcrypt.hash("student123", 10);
+    await runQuery(
+      `INSERT INTO users (username, password, role, student_id) VALUES (?, ?, ?, ?)`,
+      ["student1", studentPasswordHash, "student", "65001"]
+    );
+    console.log('✅ Default student created: username=student1, password=student123');
   }
 }
 
@@ -510,6 +576,12 @@ function requireStudentSelfOrRole(roles) {
 }
 
 function ensureLinkedStudent(req, res) {
+  // Admin และ Teacher ไม่ต้องมี studentId
+  if (req.user?.role === "admin" || req.user?.role === "teacher") {
+    return true;
+  }
+
+  // เฉพาะนักเรียนเท่านั้นที่ต้องมี studentId
   if (req.user?.role === "student" && !req.user.studentId) {
     res.status(403).json({ message: "บัญชีนักเรียนนี้ยังไม่ถูกผูกกับรหัสนักเรียน" });
     return false;
@@ -668,7 +740,7 @@ app.get("/api/users", authenticateToken, requireRole(["admin"]), async (req, res
   try {
     const rows = USE_GAS
       ? await gasListUsers()
-      : await allQuery(`SELECT id, username, role, student_id, assigned_class FROM users`);
+      : await allQuery(`SELECT id, username, role, student_id, assigned_class FROM users ORDER BY id`);
     res.json(rows.map(({ password, ...user }) => user));
   } catch (err) {
     sendDbError(res, "โหลดผู้ใช้งานไม่สำเร็จ", err);
@@ -1384,10 +1456,10 @@ app.get("/api/dashboard/summary", authenticateToken, async (req, res) => {
 
     res.json({
       date: today,
-      totalStudents: studentRow.totalStudents,
-      todayCheckIns: logRow.todayCheckIns,
-      uniqueCheckIns: logRow.uniqueCheckIns,
-      absentCount: studentRow.totalStudents - logRow.uniqueCheckIns
+      totalStudents: studentRow?.totalStudents || 0,
+      todayCheckIns: logRow?.todayCheckIns || 0,
+      uniqueCheckIns: logRow?.uniqueCheckIns || 0,
+      absentCount: (studentRow?.totalStudents || 0) - (logRow?.uniqueCheckIns || 0)
     });
   } catch (err) {
     sendDbError(res, "โหลดสรุปข้อมูลไม่สำเร็จ", err);
@@ -1399,7 +1471,8 @@ app.get("/api/dashboard/logs", authenticateToken, async (req, res) => {
     return;
   }
 
-  const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
+  const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);
+  const offset = Math.max(Number(req.query.offset || 0), 0);
   const date = String(req.query.date || "").trim();
   const isStudent = req.user.role === "student";
   const studentId = req.user.studentId;
@@ -1447,8 +1520,9 @@ app.get("/api/dashboard/logs", authenticateToken, async (req, res) => {
     params.push(studentId);
   }
 
-  query += " ORDER BY l.log_id DESC LIMIT ?";
+  query += " ORDER BY l.log_id DESC LIMIT ? OFFSET ?";
   params.push(limit);
+  params.push(offset);
 
   try {
     const rows = await allQuery(query, params);
@@ -1603,43 +1677,37 @@ app.get("/api/history", authenticateToken, requireRole(["admin", "teacher"]), as
 app.get("/api/announcements", authenticateToken, async (req, res) => {
   try {
     const user = req.user;
-    let query = `
-      SELECT a.id, a.title, a.content, a.target_audience, a.created_at,
-             u.username as created_by_name
-      FROM announcements a
-      JOIN users u ON a.created_by = u.id
-    `;
-    let params = [];
+    let whereClause = "";
+    let params = [req.user.id];
 
     // Filter announcements based on user role and target audience
     if (user.role === "student") {
-      query += " WHERE (a.target_audience = 'all' OR a.target_audience = 'students'";
+      whereClause = "(a.target_audience = 'all' OR a.target_audience = 'students'";
       if (user.studentId) {
-        // Get student's class for class-specific announcements
         const student = await getStudentById(user.studentId);
         if (student?.class_name) {
-          query += " OR a.target_audience = ?";
+          whereClause += " OR a.target_class = ?";
           params.push(student.class_name);
         }
       }
-      query += ")";
+      whereClause += ")";
     } else if (user.role === "teacher" && user.assignedClass) {
-      query += " WHERE (a.target_audience = 'all' OR a.target_audience = 'teachers' OR a.target_audience = ?)";
+      whereClause = "(a.target_audience = 'all' OR a.target_audience = 'teachers' OR a.target_class = ?)";
       params.push(user.assignedClass);
     }
     // Admin can see all announcements
 
-    query += " ORDER BY a.created_at DESC LIMIT 50";
-
     const announcements = await allQuery(`
-      SELECT a.*,
+      SELECT a.id, a.title, a.content, a.target_audience, a.target_class, 
+             a.created_at, a.created_by,
              u.username as created_by_name,
              CASE WHEN ar.read_at IS NULL THEN 1 ELSE 0 END as is_new
       FROM announcements a
       LEFT JOIN users u ON a.created_by = u.id
       LEFT JOIN announcement_reads ar ON a.id = ar.announcement_id AND ar.user_id = ?
-      ${query}
-    `, [req.user.id, ...params]);
+      ${whereClause ? "WHERE " + whereClause : ""}
+      ORDER BY a.created_at DESC LIMIT 50
+    `, params);
     res.json(announcements);
   } catch (err) {
     sendDbError(res, "โหลดประกาศไม่สำเร็จ", err);
