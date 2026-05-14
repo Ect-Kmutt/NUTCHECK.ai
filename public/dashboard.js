@@ -814,4 +814,158 @@ function updateTeacherButtonsVisibility() {
 // Call this when dashboard loads
 document.addEventListener('DOMContentLoaded', () => {
   updateTeacherButtonsVisibility();
+  
+  // Initialize calendar controls
+  document.getElementById('tabStudents')?.addEventListener('click', () => {
+    document.getElementById('studentsSection').style.display = 'block';
+    document.getElementById('calendarSection').style.display = 'none';
+    document.getElementById('tabStudents').style.color = '#6d28d9';
+    document.getElementById('tabStudents').style.borderBottomColor = '#6d28d9';
+    document.getElementById('tabCalendar').style.color = '#9ca3af';
+    document.getElementById('tabCalendar').style.borderBottomColor = 'transparent';
+  });
+
+  document.getElementById('tabCalendar')?.addEventListener('click', () => {
+    document.getElementById('studentsSection').style.display = 'none';
+    document.getElementById('calendarSection').style.display = 'block';
+    document.getElementById('tabCalendar').style.color = '#6d28d9';
+    document.getElementById('tabCalendar').style.borderBottomColor = '#6d28d9';
+    document.getElementById('tabStudents').style.color = '#9ca3af';
+    document.getElementById('tabStudents').style.borderBottomColor = 'transparent';
+    loadCalendar();
+  });
+
+  document.getElementById('prevMonth')?.addEventListener('click', () => {
+    const select = document.getElementById('monthYearSelect');
+    const value = select.value.split('-');
+    let year = Number(value[0]);
+    let month = Number(value[1]) - 1;
+    if (month < 1) { month = 12; year--; }
+    loadCalendar(year, month);
+  });
+
+  document.getElementById('nextMonth')?.addEventListener('click', () => {
+    const select = document.getElementById('monthYearSelect');
+    const value = select.value.split('-');
+    let year = Number(value[0]);
+    let month = Number(value[1]) + 1;
+    if (month > 12) { month = 1; year++; }
+    loadCalendar(year, month);
+  });
+
+  document.getElementById('monthYearSelect')?.addEventListener('change', (e) => {
+    const value = e.target.value.split('-');
+    loadCalendar(Number(value[0]), Number(value[1]));
+  });
 });
+
+// Calendar functions
+async function loadCalendar(year = null, month = null) {
+  const token = localStorage.getItem('nutcheck_token');
+  if (!token) return;
+
+  if (year === null || month === null) {
+    const today = new Date();
+    year = today.getFullYear() + 543; // Thai year
+    month = today.getMonth() + 1;
+  }
+
+  try {
+    // Load calendar data
+    const calendarRes = await fetch(`/api/calendar/${year}/${month}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!calendarRes.ok) throw new Error('โหลดปฏิทินไม่สำเร็จ');
+    const calendarData = await calendarRes.json();
+
+    // Load summary
+    const summaryRes = await fetch(`/api/calendar/${year}/${month}/summary`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    let summary = null;
+    if (summaryRes.ok) {
+      summary = await summaryRes.json();
+    }
+
+    // Render calendar
+    renderCalendar(calendarData, summary);
+    
+    // Update month/year selector
+    updateMonthYearSelect(year, month);
+  } catch (error) {
+    console.error('Calendar load error:', error);
+    document.getElementById('calendarContent').textContent = 'โหลดปฏิทินไม่สำเร็จ: ' + error.message;
+  }
+}
+
+function updateMonthYearSelect(year, month) {
+  const select = document.getElementById('monthYearSelect');
+  const monthThaiNames = ['', 'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+                         'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  
+  select.innerHTML = '';
+  // Add options for current year and previous/next year
+  for (let y = year - 1; y <= year + 1; y++) {
+    for (let m = 1; m <= 12; m++) {
+      const option = document.createElement('option');
+      option.value = `${y}-${m}`;
+      option.textContent = `${monthThaiNames[m]} ${y}`;
+      select.appendChild(option);
+    }
+  }
+  select.value = `${year}-${month}`;
+}
+
+function renderCalendar(calendarData, summary) {
+  const { year, month, calendar } = calendarData;
+  const monthThaiNames = ['', 'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+                         'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  const dayThaiNames = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'];
+
+  let html = `<h3 style="text-align: center; margin-bottom: 1rem;">${monthThaiNames[month]} ${year}</h3>`;
+  html += '<table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">';
+  
+  // Header with day names
+  html += '<tr style="background: #f3f4f6;">';
+  for (let day of dayThaiNames) {
+    html += `<td style="padding: 0.5rem; text-align: center; font-weight: 600; border: 1px solid #e5e7eb;">${day}</td>`;
+  }
+  html += '</tr>';
+
+  // Calendar grid
+  const firstDay = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let dayCounter = 1;
+
+  for (let week = 0; week < 6; week++) {
+    html += '<tr>';
+    for (let dayOfWeek = 0; dayOfWeek < 7; dayOfWeek++) {
+      if (week === 0 && dayOfWeek < firstDay) {
+        html += '<td style="padding: 0.5rem; border: 1px solid #e5e7eb; background: #f9fafb;"></td>';
+      } else if (dayCounter > daysInMonth) {
+        html += '<td style="padding: 0.5rem; border: 1px solid #e5e7eb; background: #f9fafb;"></td>';
+      } else {
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(dayCounter).padStart(2, '0')}`;
+        const count = calendar[dateStr] || 0;
+        const bgColor = count > 0 ? '#dbeafe' : '#fef2f2';
+        const textColor = count > 0 ? '#0369a1' : '#991b1b';
+        html += `<td style="padding: 0.5rem; border: 1px solid #e5e7eb; background: ${bgColor}; text-align: center; min-height: 60px; vertical-align: top;">
+          <div style="font-weight: 600; color: #374151; margin-bottom: 0.25rem;">${dayCounter}</div>
+          ${count > 0 ? `<div style="font-size: 0.8rem; color: ${textColor}; font-weight: 500;">✓ ${count}</div>` : ''}
+        </td>`;
+        dayCounter++;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+
+  document.getElementById('calendarContent').innerHTML = html;
+
+  // Update summary
+  if (summary) {
+    const summaryText = `นักเรียนทั้งหมด: ${summary.totalStudents} คน | มาเรียน: ${summary.studentsAttended} คน | ร้อยละการเข้าเรียน: ${summary.attendancePercentage}%`;
+    document.getElementById('summaryText').textContent = summaryText;
+  }
+}
+

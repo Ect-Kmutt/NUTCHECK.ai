@@ -1854,6 +1854,203 @@ app.post("/api/notifications/send-absent-reminders", authenticateToken, requireR
   }
 });
 
+// Photo Upload Endpoints
+const multer = require('multer');
+const uploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const studentUploadDir = path.join(uploadsDir, req.params.id);
+    fs.mkdirSync(studentUploadDir, { recursive: true });
+    cb(null, studentUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `photo${ext}`);
+  }
+});
+
+const upload = multer({
+  storage: uploadStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('ประเภทไฟล์ไม่ถูกต้อง (ต้องเป็น JPEG, PNG, GIF, WebP)'));
+    }
+  }
+});
+
+app.post("/api/students/:id/photo", authenticateToken, requireRole(["admin", "teacher"]), upload.single('photo'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "กรุณาเลือกไฟล์รูปภาพ" });
+  }
+
+  try {
+    const photoUrl = `/uploads/${req.params.id}/${req.file.filename}`;
+    
+    // Update student's photo_url in database
+    await runQuery(
+      "UPDATE students SET photo_url = ? WHERE id = ?",
+      [photoUrl, req.params.id]
+    );
+
+    res.json({
+      message: "อัพโหลดรูปภาพสำเร็จ",
+      photoUrl: photoUrl
+    });
+  } catch (err) {
+    sendDbError(res, "อัพโหลดรูปภาพไม่สำเร็จ", err);
+  }
+});
+
+app.delete("/api/students/:id/photo", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  try {
+    const student = await getStudentById(req.params.id);
+    if (!student) {
+      return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียน" });
+    }
+
+    // Delete photo file if exists
+    if (student.photo_url) {
+      const photoPath = path.join(__dirname, "public", student.photo_url);
+      if (fs.existsSync(photoPath)) {
+        fs.unlinkSync(photoPath);
+      }
+    }
+
+    // Clear photo_url from database
+    await runQuery(
+      "UPDATE students SET photo_url = '' WHERE id = ?",
+      [req.params.id]
+    );
+
+    res.json({ message: "ลบรูปภาพสำเร็จ" });
+  } catch (err) {
+    sendDbError(res, "ลบรูปภาพไม่สำเร็จ", err);
+  }
+});
+
+// Attendance Calendar Endpoints
+app.get("/api/calendar/:year/:month", authenticateToken, async (req, res) => {
+  if (!ensureLinkedStudent(req, res)) {
+    return;
+  }
+
+  const year = Number(req.params.year);
+  const month = Number(req.params.month);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return res.status(400).json({ message: "ปี หรือ เดือนไม่ถูกต้อง" });
+  }
+
+  try {
+    const studentId = req.user.studentId;
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+
+    let query = `
+      SELECT check_in_date as date, COUNT(*) as count
+      FROM logs
+      WHERE check_in_date >= ? AND check_in_date <= ?
+    `;
+    let params = [startDateStr, endDateStr];
+
+    if (req.user.role === "student" && studentId) {
+      query += " AND id = ?";
+      params.push(studentId);
+    } else if (req.user.role === "teacher" && req.user.assignedClass) {
+      query += " AND id IN (SELECT id FROM students WHERE class_name = ?)";
+      params.push(req.user.assignedClass);
+    }
+
+    query += " GROUP BY check_in_date ORDER BY date ASC";
+
+    const attendance = await allQuery(query, params);
+    const calendar = {};
+
+    // Initialize all days to 0
+    for (let i = 1; i <= endDate.getDate(); i++) {
+      const date = new Date(year, month - 1, i);
+      const dateStr = date.toISOString().split('T')[0];
+      calendar[dateStr] = 0;
+    }
+
+    // Fill in attendance
+    attendance.forEach(record => {
+      calendar[record.date] = record.count;
+    });
+
+    res.json({
+      year,
+      month,
+      calendar
+    });
+  } catch (err) {
+    sendDbError(res, "โหลดปฏิทินการเช็คชื่อไม่สำเร็จ", err);
+  }
+});
+
+// Get monthly summary
+app.get("/api/calendar/:year/:month/summary", authenticateToken, async (req, res) => {
+  if (!ensureLinkedStudent(req, res)) {
+    return;
+  }
+
+  const year = Number(req.params.year);
+  const month = Number(req.params.month);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return res.status(400).json({ message: "ปี หรือ เดือนไม่ถูกต้อง" });
+  }
+
+  try {
+    const studentId = req.user.studentId;
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+    const totalDays = endDate.getDate();
+
+    let studentCountQuery = "SELECT COUNT(DISTINCT id) as total FROM students WHERE 1 = 1";
+    let attendanceQuery = `
+      SELECT COUNT(DISTINCT id) as attended
+      FROM logs
+      WHERE check_in_date >= ? AND check_in_date <= ?
+    `;
+    let attendanceParams = [startDateStr, endDateStr];
+    let studentCountParams = [];
+
+    if (req.user.role === "teacher" && req.user.assignedClass) {
+      studentCountQuery += " AND class_name = ?";
+      studentCountParams.push(req.user.assignedClass);
+      attendanceQuery += " AND id IN (SELECT id FROM students WHERE class_name = ?)";
+      attendanceParams.push(req.user.assignedClass);
+    }
+
+    const [studentCount, attendanceCount] = await Promise.all([
+      getQuery(studentCountQuery, studentCountParams),
+      getQuery(attendanceQuery, attendanceParams)
+    ]);
+
+    res.json({
+      year,
+      month,
+      totalDays,
+      totalStudents: studentCount?.total || 0,
+      studentsAttended: attendanceCount?.attended || 0,
+      attendancePercentage: studentCount?.total ? Math.round((attendanceCount?.attended || 0) / studentCount.total * 100) : 0
+    });
+  } catch (err) {
+    sendDbError(res, "โหลดสรุปปฏิทินไม่สำเร็จ", err);
+  }
+});
+
+// Serve uploaded photos
+app.use("/uploads", express.static(uploadsDir));
+
 migrateDatabase()
   .then(() => {
     app.listen(PORT, HOST, () => {
