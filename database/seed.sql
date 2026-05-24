@@ -12,9 +12,9 @@ VALUES
 -- student password: student123
 INSERT OR IGNORE INTO users (username, password, role, student_id, assigned_class)
 VALUES
-  ('admin', '$2a$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'admin', NULL, ''),
-  ('teacher1', '$2a$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'teacher', NULL, ''),
-  ('student1', '$2a$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'student', '65001', '');
+  ('admin', '$2b$10$ixxU2Us67FG8su/j7qLVyO4ZtUUbQ3OrM3YPaLW0vIrHjoFOjaEJW', 'admin', NULL, ''),
+  ('teacher1', '$2b$10$iGjmMms7NvRHXp4hHi/7c.5FkM9BmrhaEDuAnUEie2ZLDLnBe.u9y', 'teacher', NULL, ''),
+  ('student1', '$2b$10$zmGrQrh.IcJrd4KGqkxOx.zKw8kfEQCaWPdOt3G7lF7l/BAy75DD2', 'student', '65001', '');
 
 INSERT OR IGNORE INTO grades (student_id, subject, score)
 VALUES
