@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ให้คะแนนจิตพิสัย - NutCheck</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .behavior-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .behavior-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      gap: 20px;
+    }
+
+    .behavior-header h1 {
+      font-size: 28px;
+      color: #333;
+    }
+
+    .date-picker {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .date-picker input {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .student-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    .student-card {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .student-card h3 {
+      margin: 0 0 15px 0;
+      font-size: 18px;
+      color: #333;
+    }
+
+    .student-id {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 15px;
+    }
+
+    .behavior-subjects {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .subject-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      background: #f9f9f9;
+      border-radius: 4px;
+    }
+
+    .subject-name {
+      font-size: 14px;
+      color: #555;
+      font-weight: 500;
+    }
+
+    .star-rating {
+      display: flex;
+      gap: 5px;
+      cursor: pointer;
+    }
+
+    .star {
+      font-size: 28px;
+      color: #ddd;
+      cursor: pointer;
+      transition: color 0.2s;
+      user-select: none;
+    }
+
+    .star:hover,
+    .star.active {
+      color: #ffc107;
+    }
+
+    .star.filled {
+      color: #ffc107;
+    }
+
+    .notes-field {
+      width: 100%;
+      padding: 8px;
+      margin-top: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 12px;
+      resize: vertical;
+      min-height: 50px;
+    }
+
+    .save-btn {
+      width: 100%;
+      padding: 10px;
+      margin-top: 15px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.3s;
+    }
+
+    .save-btn:hover {
+      background: #45a049;
+    }
+
+    .save-btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .toast-message {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 15px 20px;
+      background: #333;
+      color: white;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      z-index: 1000;
+      animation: slideIn 0.3s ease-in-out;
+    }
+
+    .toast-message.success {
+      background: #4CAF50;
+    }
+
+    .toast-message.error {
+      background: #f44336;
+    }
+
+    @keyframes slideIn {
+      from {
+        transform: translateX(400px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #999;
+    }
+
+    .current-score {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+
+    @media (max-width: 768px) {
+      .behavior-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .student-list {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="behavior-container">
+    <div class="behavior-header">
+      <h1>📊 ให้คะแนนจิตพิสัยนักเรียน</h1>
+      <div class="date-picker">
+        <label for="scoreDate">วันที่:</label>
+        <input type="date" id="scoreDate" />
+      </div>
+    </div>
+
+    <div class="student-list" id="studentList">
+      <div class="loading">กำลังโหลดข้อมูลนักเรียน...</div>
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+  <script>
+    const BEHAVIOR_SUBJECTS = [
+      { key: "responsibility", label: "ความรับผิดชอบ" },
+      { key: "discipline", label: "วินัย" },
+      { key: "teamwork", label: "ความร่วมมือ" },
+      { key: "honesty", label: "ความสัจจะ" },
+      { key: "respect", label: "ความเคารพ" }
+    ];
+
+    let students = [];
+    let behaviorData = {};
+
+    async function initPage() {
+      const today = new Date().toISOString().split("T")[0];
+      document.getElementById("scoreDate").value = today;
+
+      await loadStudents();
+      await loadBehaviors();
+      renderStudents();
+
+      document.getElementById("scoreDate").addEventListener("change", async () => {
+        await loadBehaviors();
+        renderStudents();
+      });
+    }
+
+    async function loadStudents() {
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch("/api/students", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!response.ok) throw new Error("Failed to load students");
+        students = await response.json();
+      } catch (error) {
+        showToast("ไม่สามารถโหลดข้อมูลนักเรียน: " + error.message, "error");
+      }
+    }
+
+    async function loadBehaviors() {
+      const date = document.getElementById("scoreDate").value;
+      behaviorData = {};
+
+      for (const student of students) {
+        try {
+          const token = localStorage.getItem("token");
+          const response = await fetch(`/api/students/${student.id}/behaviors`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+
+          if (response.ok) {
+            const behaviors = await response.json();
+            behaviorData[student.id] = behaviors.filter(b => b.date === date);
+          }
+        } catch (error) {
+          console.error(`Failed to load behaviors for student ${student.id}:`, error);
+        }
+      }
+    }
+
+    function renderStudents() {
+      const container = document.getElementById("studentList");
+      container.innerHTML = students
+        .map(
+          student => `
+        <div class="student-card">
+          <h3>${student.name}</h3>
+          <div class="student-id">รหัสนักเรียน: ${student.id}</div>
+          
+          <div class="behavior-subjects">
+            ${BEHAVIOR_SUBJECTS.map(
+              subject => `
+              <div class="subject-row">
+                <div>
+                  <div class="subject-name">${subject.label}</div>
+                  <div class="current-score" data-score-display="${student.id}-${subject.key}"></div>
+                </div>
+                <div class="star-rating" data-student-id="${student.id}" data-subject-key="${subject.key}">
+                  ${Array.from({ length: 5 })
+                    .map(
+                      (_, i) => `
+                    <span class="star" data-score="${i + 1}">★</span>
+                  `
+                    )
+                    .join("")}
+                </div>
+              </div>
+            `
+            ).join("")}
+          </div>
+
+          <textarea class="notes-field" placeholder="หมายเหตุ" data-notes="${student.id}"></textarea>
+          <button class="save-btn" onclick="saveStudentBehaviors('${student.id}')">
+            💾 บันทึก
+          </button>
+        </div>
+      `
+        )
+        .join("");
+
+      // Initialize star ratings and update score displays
+      updateAllStarRatings();
+    }
+
+    function updateAllStarRatings() {
+      const date = document.getElementById("scoreDate").value;
+
+      document.querySelectorAll(".star-rating").forEach(rating => {
+        const studentId = rating.getAttribute("data-student-id");
+        const subjectKey = rating.getAttribute("data-subject-key");
+        const behaviors = behaviorData[studentId] || [];
+        const behavior = behaviors.find(b => b.subject === BEHAVIOR_SUBJECTS.find(s => s.key === subjectKey)?.label);
+
+        // Update score display
+        const displayEl = document.querySelector(`[data-score-display="${studentId}-${subjectKey}"]`);
+        if (behavior) {
+          displayEl.textContent = `คะแนนปัจจุบัน: ${behavior.score}`;
+        }
+
+        // Set stars
+        const score = behavior ? behavior.score : 0;
+        rating.querySelectorAll(".star").forEach((star, i) => {
+          star.classList.toggle("filled", i < score);
+          star.addEventListener("click", () => {
+            rating.querySelectorAll(".star").forEach((s, j) => {
+              s.classList.toggle("filled", j < i + 1);
+            });
+          });
+          star.addEventListener("mouseover", () => {
+            rating.querySelectorAll(".star").forEach((s, j) => {
+              s.classList.toggle("active", j < i + 1);
+            });
+          });
+        });
+
+        rating.addEventListener("mouseleave", () => {
+          rating.querySelectorAll(".star").forEach(s => s.classList.remove("active"));
+        });
+      });
+    }
+
+    async function saveStudentBehaviors(studentId) {
+      const date = document.getElementById("scoreDate").value;
+      const ratings = document.querySelectorAll(`[data-student-id="${studentId}"]`);
+      const notesEl = document.querySelector(`[data-notes="${studentId}"]`);
+      const notes = notesEl.value;
+
+      const behaviors = [];
+
+      ratings.forEach(rating => {
+        const subjectKey = rating.getAttribute("data-subject-key");
+        const subjectLabel = BEHAVIOR_SUBJECTS.find(s => s.key === subjectKey)?.label;
+        const filledStars = rating.querySelectorAll(".star.filled").length;
+
+        if (filledStars > 0) {
+          behaviors.push({
+            date,
+            subject: subjectLabel,
+            score: filledStars * 20, // Convert stars to score (1 star = 20, 5 stars = 100)
+            notes
+          });
+        }
+      });
+
+      if (behaviors.length === 0) {
+        showToast("กรุณาให้คะแนนอย่างน้อย 1 วิชา", "error");
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem("token");
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = "กำลังบันทึก...";
+
+        for (const behavior of behaviors) {
+          const response = await fetch(`/api/students/${studentId}/behaviors`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(behavior)
+          });
+
+          if (!response.ok) throw new Error("Failed to save behavior");
+        }
+
+        showToast("✅ บันทึกคะแนนจิตพิสัยสำเร็จ", "success");
+        await loadBehaviors();
+        renderStudents();
+
+        btn.disabled = false;
+        btn.textContent = "💾 บันทึก";
+      } catch (error) {
+        showToast("❌ บันทึกไม่สำเร็จ: " + error.message, "error");
+        event.target.disabled = false;
+        event.target.textContent = "💾 บันทึก";
+      }
+    }
+
+    function showToast(message, type = "info") {
+      const toast = document.createElement("div");
+      toast.className = `toast-message ${type}`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.animation = "slideIn 0.3s ease-in-out reverse";
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    initPage();
+  </script>
+</body>
+</html>

@@ -19,6 +19,17 @@ CREATE TABLE IF NOT EXISTS logs (
   FOREIGN KEY (id) REFERENCES students(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS behaviors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  score REAL NOT NULL,
+  notes TEXT DEFAULT '',
+  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+  UNIQUE(student_id, date, subject)
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_students_nfc_uid_unique
 ON students(nfc_uid)
 WHERE nfc_uid IS NOT NULL AND nfc_uid != '';
@@ -32,6 +43,9 @@ ON logs(check_in_date);
 CREATE INDEX IF NOT EXISTS idx_logs_student_date
 ON logs(id, check_in_date);
 
+CREATE INDEX IF NOT EXISTS idx_behaviors_student_date
+ON behaviors(student_id, date);
+
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
@@ -39,6 +53,7 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'student',
   student_id TEXT,
   assigned_class TEXT DEFAULT '',
+  email TEXT DEFAULT '',
   FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE SET NULL
 );
 

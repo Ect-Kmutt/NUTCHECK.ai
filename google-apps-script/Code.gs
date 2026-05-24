@@ -2,14 +2,16 @@ var SHEET_NAMES = {
   students: "students",
   users: "users",
   grades: "grades",
-  logs: "logs"
+  logs: "logs",
+  behaviors: "behaviors"
 };
 
 var SHEET_HEADERS = {
   students: ["id", "name", "class_name", "nfc_uid", "photo_url"],
-  users: ["id", "username", "password", "role", "student_id", "assigned_class"],
+  users: ["id", "username", "password", "role", "student_id", "assigned_class", "email"],
   grades: ["id", "student_id", "subject", "score"],
-  logs: ["log_id", "id", "student_name", "check_in_at", "check_in_date", "status", "method"]
+  logs: ["log_id", "id", "student_name", "check_in_at", "check_in_date", "status", "method"],
+  behaviors: ["id", "student_id", "date", "subject", "score", "notes"]
 };
 
 function doGet(e) {
@@ -75,13 +77,15 @@ function getHandlers_() {
       writeTable_("users", snapshot.users || []);
       writeTable_("grades", snapshot.grades || []);
       writeTable_("logs", snapshot.logs || []);
+      writeTable_("behaviors", snapshot.behaviors || []);
 
       return {
         imported: {
           students: (snapshot.students || []).length,
           users: (snapshot.users || []).length,
           grades: (snapshot.grades || []).length,
-          logs: (snapshot.logs || []).length
+          logs: (snapshot.logs || []).length,
+          behaviors: (snapshot.behaviors || []).length
         }
       };
     },
@@ -90,7 +94,8 @@ function getHandlers_() {
         students: readTable_("students"),
         users: readTable_("users"),
         grades: readTable_("grades"),
-        logs: readTable_("logs")
+        logs: readTable_("logs"),
+        behaviors: readTable_("behaviors")
       };
     },
     listStudents: function (payload) {
@@ -119,11 +124,40 @@ function getHandlers_() {
     listUsers: function () {
       return readTable_("users");
     },
+    getUser: function (payload) {
+      if (!payload.userId) {
+        throw new Error("Missing userId");
+      }
+      var user = findByField_("users", "id", payload.userId);
+      if (!user) {
+        throw new Error("User not found");
+      }
+      return user;
+    },
     upsertUser: function (payload) {
       if (!payload.user) {
         throw new Error("Missing user payload");
       }
       return upsertRow_("users", payload.user, "id");
+    },
+    updateUserEmail: function (payload) {
+      if (!payload.userId || payload.email === undefined) {
+        throw new Error("Missing userId or email");
+      }
+      var rows = readTable_("users");
+      var updated = false;
+      rows = rows.map(function (row) {
+        if (String(row.id) === String(payload.userId)) {
+          row.email = String(payload.email).trim();
+          updated = true;
+        }
+        return row;
+      });
+      if (!updated) {
+        throw new Error("User not found");
+      }
+      writeTable_("users", rows);
+      return { userId: payload.userId, email: payload.email };
     },
     deleteUser: function (payload) {
       deleteByField_("users", "id", payload.id);
@@ -159,6 +193,39 @@ function getHandlers_() {
 
       writeTable_("grades", table);
       return { studentId: payload.studentId, count: subjects.length };
+    },
+    getBehaviors: function (payload) {
+      if (!payload.studentId) {
+        throw new Error("Missing studentId");
+      }
+      return readTable_("behaviors").filter(function (row) {
+        return String(row.student_id) === String(payload.studentId);
+      });
+    },
+    saveBehaviors: function (payload) {
+      if (!payload.studentId || !payload.behaviors) {
+        throw new Error("Missing studentId or behaviors");
+      }
+
+      var table = readTable_("behaviors").filter(function (row) {
+        return String(row.student_id) !== String(payload.studentId);
+      });
+
+      var behaviors = payload.behaviors;
+      for (var i = 0; i < behaviors.length; i += 1) {
+        var behavior = behaviors[i];
+        table.push({
+          id: nextNumericId_(table, "id"),
+          student_id: String(payload.studentId),
+          date: String(behavior.date),
+          subject: String(behavior.subject),
+          score: Number(behavior.score),
+          notes: String(behavior.notes || "")
+        });
+      }
+
+      writeTable_("behaviors", table);
+      return { studentId: payload.studentId, count: behaviors.length };
     },
     addLog: function (payload) {
       if (!payload.log) {

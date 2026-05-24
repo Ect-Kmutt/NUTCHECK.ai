@@ -77,7 +77,9 @@ async function loadDashboard() {
     isAdmin = user.role === 'admin';
     
     const addBtn = document.getElementById('addStudentBtn');
+    const qrBtn = document.getElementById('generateQrBtn');
     if (addBtn) addBtn.style.display = isAdminOrTeacher ? 'block' : 'none';
+    if (qrBtn) qrBtn.style.display = isAdminOrTeacher ? 'inline-block' : 'none';
     
     document.querySelectorAll('.admin-only').forEach(el => el.style.display = isAdminOrTeacher ? 'table-cell' : 'none');
     

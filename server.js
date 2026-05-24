@@ -20,6 +20,7 @@ const GAS_API_KEY = String(process.env.GAS_API_KEY || "").trim();
 const DATA_PROVIDER = String(process.env.DATA_PROVIDER || ((GAS_WEB_APP_URL && GAS_API_KEY) ? "gas" : "sqlite")).trim().toLowerCase();
 const USE_GAS = DATA_PROVIDER === "gas";
 const adminSessions = new Map();
+const activeCheckinSessions = new Map();
 
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -740,7 +741,7 @@ app.get("/api/users", authenticateToken, requireRole(["admin"]), async (req, res
   try {
     const rows = USE_GAS
       ? await gasListUsers()
-      : await allQuery(`SELECT id, username, role, student_id, assigned_class FROM users ORDER BY id`);
+      : await allQuery(`SELECT id, username, role, student_id, assigned_class, email FROM users ORDER BY id`);
     res.json(rows.map(({ password, ...user }) => user));
   } catch (err) {
     sendDbError(res, "โหลดผู้ใช้งานไม่สำเร็จ", err);
@@ -748,7 +749,7 @@ app.get("/api/users", authenticateToken, requireRole(["admin"]), async (req, res
 });
 
 app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, res) => {
-  const { username, password, role, studentId, assignedClass } = req.body;
+  const { username, password, role, studentId, assignedClass, email } = req.body;
   if (!username || !password || !role) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
   try {
     if (USE_GAS) {
@@ -764,7 +765,8 @@ app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, re
           password: hashedPassword,
           role,
           student_id: studentId || "",
-          assigned_class: assignedClass || ""
+          assigned_class: assignedClass || "",
+          email: email || ""
         }
       });
       return res.status(201).json({ message: "สร้างผู้ใช้สำเร็จ" });
@@ -772,8 +774,8 @@ app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, re
 
     const hashedPassword = await bcrypt.hash(password, 10);
     await runQuery(
-      `INSERT INTO users (username, password, role, student_id, assigned_class) VALUES (?, ?, ?, ?, ?)`,
-      [username, hashedPassword, role, studentId || null, assignedClass || null]
+      `INSERT INTO users (username, password, role, student_id, assigned_class, email) VALUES (?, ?, ?, ?, ?, ?)`,
+      [username, hashedPassword, role, studentId || null, assignedClass || null, email || null]
     );
     res.status(201).json({ message: "สร้างผู้ใช้สำเร็จ" });
   } catch (err) {
@@ -784,7 +786,7 @@ app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, re
 });
 
 app.put("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req, res) => {
-  const { username, password, role, studentId, assignedClass } = req.body;
+  const { username, password, role, studentId, assignedClass, email } = req.body;
   try {
     if (USE_GAS) {
       const users = await gasListUsers();
@@ -806,7 +808,8 @@ app.put("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req,
           password: nextPassword,
           role,
           student_id: studentId || "",
-          assigned_class: assignedClass || ""
+          assigned_class: assignedClass || "",
+          email: email || currentUser.email || ""
         }
       });
       return res.json({ message: "อัปเดตผู้ใช้สำเร็จ" });
@@ -814,9 +817,9 @@ app.put("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req,
 
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
-      await runQuery(`UPDATE users SET username=?, password=?, role=?, student_id=?, assigned_class=? WHERE id=?`, [username, hashedPassword, role, studentId || null, assignedClass || null, req.params.id]);
+      await runQuery(`UPDATE users SET username=?, password=?, role=?, student_id=?, assigned_class=?, email=? WHERE id=?`, [username, hashedPassword, role, studentId || null, assignedClass || null, email || null, req.params.id]);
     } else {
-      await runQuery(`UPDATE users SET username=?, role=?, student_id=?, assigned_class=? WHERE id=?`, [username, role, studentId || null, assignedClass || null, req.params.id]);
+      await runQuery(`UPDATE users SET username=?, role=?, student_id=?, assigned_class=?, email=? WHERE id=?`, [username, role, studentId || null, assignedClass || null, email || null, req.params.id]);
     }
     res.json({ message: "อัปเดตผู้ใช้สำเร็จ" });
   } catch (err) {
@@ -837,6 +840,27 @@ app.delete("/api/users/:id", authenticateToken, requireRole(["admin"]), async (r
     res.json({ message: "ลบผู้ใช้สำเร็จ" });
   } catch (err) {
     sendDbError(res, "ลบผู้ใช้ไม่สำเร็จ", err);
+  }
+});
+
+app.put("/api/users/:id/email", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  const { email } = req.body;
+  if (email === undefined || email === null) {
+    return res.status(400).json({ message: "กรุณากรอกอีเมล" });
+  }
+  try {
+    if (USE_GAS) {
+      await gasRequest("updateUserEmail", { userId: req.params.id, email });
+      return res.json({ message: "อัปเดตอีเมลสำเร็จ" });
+    }
+
+    const result = await runQuery(`UPDATE users SET email=? WHERE id=?`, [email || null, req.params.id]);
+    if (result.changes === 0) {
+      return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+    }
+    res.json({ message: "อัปเดตอีเมลสำเร็จ" });
+  } catch (err) {
+    sendDbError(res, "อัปเดตอีเมลไม่สำเร็จ", err);
   }
 });
 
@@ -1116,7 +1140,7 @@ app.delete("/api/students/:id", authenticateToken, requireRole(["admin", "teache
   }
 });
 
-// Grades and AI Analysis Endpoints
+// Grades and Psychometric Behavior Endpoints
 app.get("/api/students/:id/grades", authenticateToken, requireStudentSelfOrRole(["admin", "teacher"]), async (req, res) => {
   try {
     const rows = USE_GAS
@@ -1166,6 +1190,84 @@ app.post("/api/students/:id/grades", authenticateToken, requireStudentSelfOrRole
     res.json({ message: "บันทึกคะแนนสำเร็จ" });
   } catch (err) {
     sendDbError(res, "บันทึกคะแนนไม่สำเร็จ", err);
+  }
+});
+
+// Psychometric Behavior Scoring Endpoints
+app.get("/api/students/:id/behaviors", authenticateToken, requireStudentSelfOrRole(["admin", "teacher"]), async (req, res) => {
+  try {
+    const rows = USE_GAS
+      ? await gasRequest("getBehaviors", { studentId: req.params.id })
+      : await allQuery(`SELECT id, date, subject, score, notes FROM behaviors WHERE student_id = ? ORDER BY date DESC`, [req.params.id]);
+    res.json(rows);
+  } catch (err) {
+    sendDbError(res, "โหลดคะแนนจิตพิสัยไม่สำเร็จ", err);
+  }
+});
+
+app.post("/api/students/:id/behaviors", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  const { date, subject, score, notes } = req.body;
+  const studentId = req.params.id;
+
+  if (!date || !subject || score === undefined) {
+    return res.status(400).json({ message: "กรุณากรอกวันที่ วิชา และคะแนนให้ครบถ้วน" });
+  }
+
+  const numericScore = Number(score);
+  if (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 100) {
+    return res.status(400).json({ message: "คะแนนจิตพิสัยต้องอยู่ระหว่าง 0 ถึง 100" });
+  }
+
+  try {
+    if (USE_GAS) {
+      await gasRequest("saveBehaviors", {
+        studentId,
+        behaviors: [{ date, subject, score: numericScore, notes: notes || "" }]
+      });
+      return res.status(201).json({ message: "บันทึกคะแนนจิตพิสัยสำเร็จ" });
+    }
+
+    await runQuery(
+      `INSERT OR REPLACE INTO behaviors (student_id, date, subject, score, notes) VALUES (?, ?, ?, ?, ?)`,
+      [studentId, date, subject, numericScore, notes || null]
+    );
+    res.status(201).json({ message: "บันทึกคะแนนจิตพิสัยสำเร็จ" });
+  } catch (err) {
+    sendDbError(res, "บันทึกคะแนนจิตพิสัยไม่สำเร็จ", err);
+  }
+});
+
+app.put("/api/students/:id/behaviors/:behaviorId", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  const { score, notes } = req.body;
+  const studentId = req.params.id;
+  const behaviorId = req.params.behaviorId;
+
+  if (score === undefined) {
+    return res.status(400).json({ message: "กรุณากรอกคะแนนจิตพิสัย" });
+  }
+
+  const numericScore = Number(score);
+  if (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 100) {
+    return res.status(400).json({ message: "คะแนนจิตพิสัยต้องอยู่ระหว่าง 0 ถึง 100" });
+  }
+
+  try {
+    if (USE_GAS) {
+      return res.status(501).json({ message: "ยังไม่สนับสนุนการแก้ไขในโหมด Google Apps Script" });
+    }
+
+    const result = await runQuery(
+      `UPDATE behaviors SET score = ?, notes = ? WHERE id = ? AND student_id = ?`,
+      [numericScore, notes || null, behaviorId, studentId]
+    );
+
+    if (result.changes === 0) {
+      return res.status(404).json({ message: "ไม่พบบันทึกคะแนนจิตพิสัยนี้" });
+    }
+
+    res.json({ message: "อัปเดตคะแนนจิตพิสัยสำเร็จ" });
+  } catch (err) {
+    sendDbError(res, "อัปเดตคะแนนจิตพิสัยไม่สำเร็จ", err);
   }
 });
 
@@ -1244,6 +1346,50 @@ Explanation: [Explanation in Thai]`;
     res.json({ grades, suggestion, description, isMocked });
   } catch (err) {
     sendDbError(res, "วิเคราะห์ผลไม่สำเร็จ", err);
+  }
+});
+
+app.post("/api/checkin-sessions", authenticateToken, requireRole(["admin", "teacher"]), async (req, res) => {
+  const { className, expiresMins } = req.body;
+  const teacherId = req.user.id;
+  const targetClass = className || req.user.assignedClass || "";
+  
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = new Date(Date.now() + (expiresMins || 30) * 60000);
+  
+  activeCheckinSessions.set(code, {
+    teacherId,
+    targetClass,
+    expiresAt,
+    createdAt: new Date()
+  });
+  
+  res.json({ code, expiresAt, targetClass });
+});
+
+app.post("/api/attendance/code", async (req, res) => {
+  const { code, studentId } = req.body;
+  if (!code || !studentId) return res.status(400).json({ message: "กรุณาระบุรหัสนักเรียนและรหัสเช็คชื่อ" });
+  
+  const session = activeCheckinSessions.get(String(code).trim());
+  if (!session) return res.status(404).json({ message: "รหัสเช็คชื่อไม่ถูกต้องหรือหมดอายุแล้ว" });
+  
+  if (new Date() > session.expiresAt) {
+    activeCheckinSessions.delete(String(code).trim());
+    return res.status(400).json({ message: "รหัสเช็คชื่อหมดอายุแล้ว" });
+  }
+  
+  try {
+    const student = await getStudentById(studentId);
+    if (!student) return res.status(404).json({ message: "ไม่พบข้อมูลนักเรียน" });
+    
+    if (session.targetClass && String(student.class_name).trim() !== String(session.targetClass).trim()) {
+      return res.status(403).json({ message: "นักเรียนไม่ได้อยู่ในห้องเรียนที่กำหนดให้เช็คชื่อ" });
+    }
+    
+    res.json(await saveAttendance(student, "qr_code"));
+  } catch(err) {
+    sendDbError(res, "เช็คชื่อไม่สำเร็จ", err);
   }
 });
 
