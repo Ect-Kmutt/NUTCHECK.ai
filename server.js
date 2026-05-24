@@ -362,10 +362,10 @@ async function migrateDatabase() {
   const studentCountRow = await getQuery("SELECT COUNT(*) AS count FROM students");
   if ((studentCountRow?.count || 0) === 0) {
     const sampleStudents = [
-      ["65001", "Min", "", "", ""],
-      ["65002", "Nina", "", "", ""],
-      ["65003", "Boss", "", "", ""],
-      ["65004", "Ploy", "", "", ""]
+      ["65001", "Min", "", "04b43262cd2a81", ""],
+      ["65002", "Nina", "", "04cdef63cd2a81", ""],
+      ["65003", "Boss", "", "04cb746fcc2a81", ""],
+      ["65004", "Ploy", "", "04261664cd2a81", ""]
     ];
 
     for (const student of sampleStudents) {
