@@ -875,6 +875,77 @@ app.put("/api/users/:id/email", authenticateToken, requireRole(["admin"]), async
   }
 });
 
+app.delete("/api/admin/database/reset", authenticateToken, requireRole(["admin"]), async (req, res) => {
+  if (USE_GAS) {
+    return res.status(501).json({ message: "ไม่สามารถรีเซ็ต Google Apps Script database ได้" });
+  }
+
+  try {
+    console.log('🗑️ Admin requesting database reset...');
+    
+    // Drop all data tables (keep structure)
+    await runQuery("DELETE FROM students");
+    await runQuery("DELETE FROM logs");
+    await runQuery("DELETE FROM grades");
+    await runQuery("DELETE FROM behaviors");
+    await runQuery("DELETE FROM announcements");
+    await runQuery("DELETE FROM announcement_reads");
+    
+    console.log('✅ Tables cleared');
+    
+    // Re-seed sample data
+    const sampleStudents = [
+      ["65001", "Min", "", "04b43262cd2a81", ""],
+      ["65002", "Nina", "", "04cdef63cd2a81", ""],
+      ["65003", "Boss", "", "04cb746fcc2a81", ""],
+      ["65004", "Ploy", "", "04261664cd2a81", ""]
+    ];
+
+    for (const student of sampleStudents) {
+      await runQuery(
+        `INSERT INTO students (id, name, class_name, nfc_uid, photo_url) VALUES (?, ?, ?, ?, ?)`,
+        student
+      );
+    }
+
+    // Re-seed grades
+    const sampleGrades = [
+      ["65001", "คณิตศาสตร์", 85],
+      ["65001", "วิทยาศาสตร์", 78],
+      ["65001", "ภาษาไทย", 90],
+      ["65002", "คณิตศาสตร์", 92],
+      ["65002", "วิทยาศาสตร์", 88],
+      ["65002", "ภาษาไทย", 85],
+      ["65003", "คณิตศาสตร์", 75],
+      ["65003", "วิทยาศาสตร์", 80],
+      ["65003", "ภาษาไทย", 88],
+      ["65004", "คณิตศาสตร์", 88],
+      ["65004", "วิทยาศาสตร์", 92],
+      ["65004", "ภาษาไทย", 91]
+    ];
+
+    for (const [studentId, subject, score] of sampleGrades) {
+      try {
+        await runQuery(
+          `INSERT INTO grades (student_id, subject, score) VALUES (?, ?, ?)`,
+          [studentId, subject, score]
+        );
+      } catch (err) {
+        // Ignore duplicates
+      }
+    }
+
+    console.log('✅ Sample data re-seeded');
+    res.json({
+      message: "รีเซ็ตฐานข้อมูลสำเร็จ",
+      seededStudents: 4,
+      grades: sampleGrades.length
+    });
+  } catch (err) {
+    sendDbError(res, "รีเซ็ตฐานข้อมูลไม่สำเร็จ", err);
+  }
+});
+
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
