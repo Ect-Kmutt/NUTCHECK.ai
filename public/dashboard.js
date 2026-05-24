@@ -196,6 +196,7 @@ function renderTables(isAdminOrTeacher) {
         <tr>
           <td>${student.id}</td>
           <td>${student.name}</td>
+          <td><code style="background:#f3f4f6; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.85rem;">${student.nfc_uid || '-'}</code></td>
           <td><span class="badge ${student.attendanceStatus === "มาเรียน" ? "badge-ok" : "badge-pending"}">${student.attendanceStatus}</span></td>
           <td style="display:flex; gap:0.25rem;">
             ${(isAdminOrTeacher || (student.id === myId)) ? `
@@ -390,6 +391,12 @@ if (userForm) {
       studentId: document.getElementById('usrStuId').value || null,
       assignedClass: document.getElementById('usrAssignedClass').value || null
     };
+
+    if (payload.role === 'student' && !payload.studentId) {
+      showError('บัญชีนักเรียนต้องผูกกับรหัสนักเรียนก่อนบันทึก');
+      return;
+    }
+
     const pwd = document.getElementById('usrPwd').value;
     if (pwd) payload.password = pwd;
 

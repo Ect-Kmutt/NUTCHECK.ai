@@ -752,7 +752,12 @@ app.get("/api/users", authenticateToken, requireRole(["admin"]), async (req, res
 app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, res) => {
   const { username, password, role, studentId, assignedClass, email } = req.body;
   if (!username || !password || !role) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+  if (role === "student" && !studentId) return res.status(400).json({ message: "บัญชีนักเรียนต้องผูกกับรหัสนักเรียน" });
   try {
+    if (role === "student") {
+      const student = await getStudentById(studentId);
+      if (!student) return res.status(400).json({ message: "ไม่พบรหัสนักเรียนนี้ในระบบ" });
+    }
     if (USE_GAS) {
       const users = await gasListUsers();
       if (users.some(user => String(user.username) === String(username))) {
@@ -788,7 +793,12 @@ app.post("/api/users", authenticateToken, requireRole(["admin"]), async (req, re
 
 app.put("/api/users/:id", authenticateToken, requireRole(["admin"]), async (req, res) => {
   const { username, password, role, studentId, assignedClass, email } = req.body;
+  if (role === "student" && !studentId) return res.status(400).json({ message: "บัญชีนักเรียนต้องผูกกับรหัสนักเรียน" });
   try {
+    if (role === "student") {
+      const student = await getStudentById(studentId);
+      if (!student) return res.status(400).json({ message: "ไม่พบรหัสนักเรียนนี้ในระบบ" });
+    }
     if (USE_GAS) {
       const users = await gasListUsers();
       const currentUser = users.find(user => String(user.id) === String(req.params.id));
