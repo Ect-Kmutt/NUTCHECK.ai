@@ -324,7 +324,8 @@ async function migrateDatabase() {
   }
 
   const userColumns = [
-    ["assigned_class", "TEXT"]
+    ["assigned_class", "TEXT"],
+    ["email", "TEXT"]
   ];
 
   for (const [columnName, definition] of userColumns) {
