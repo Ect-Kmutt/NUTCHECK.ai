@@ -5,14 +5,9 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    disk:
-      name: nutcheck-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: 22.22.0
-      - key: DATA_DIR
-        value: /data
       - key: NODE_ENV
         value: production
+
