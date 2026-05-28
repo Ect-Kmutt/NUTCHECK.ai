@@ -9,39 +9,6 @@ function setStudentSummaryLabels(isStudent) {
   document.getElementById("absentCountLabel").textContent = isStudent ? "สถานะวันนี้" : "ยังไม่เช็คชื่อ";
 }
 
-async function loadStudentInsight(studentId, token) {
-  const suggestionEl = document.getElementById("studentAiSuggestion");
-  const descriptionEl = document.getElementById("studentAiDescription");
-  const badgeEl = document.getElementById("studentAiBadge");
-
-  if (!studentId || !suggestionEl || !descriptionEl || !badgeEl) {
-    return;
-  }
-
-  suggestionEl.textContent = "กำลังโหลดผลวิเคราะห์...";
-  descriptionEl.textContent = "ระบบกำลังสรุปข้อมูลเฉพาะของคุณ";
-  badgeEl.style.display = "none";
-
-  try {
-    const response = await fetch(`/api/students/${studentId}/analysis`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    if (!response.ok) {
-      throw new Error("โหลดผลวิเคราะห์ไม่สำเร็จ");
-    }
-
-    const data = await response.json();
-    suggestionEl.textContent = data.suggestion || "ยังไม่มีคำแนะนำ";
-    descriptionEl.textContent = data.description || "ยังไม่มีคำอธิบายเพิ่มเติม";
-    badgeEl.style.display = data.isMocked ? "inline-block" : "none";
-  } catch (error) {
-    suggestionEl.textContent = "ยังโหลดผลวิเคราะห์ไม่ได้";
-    descriptionEl.textContent = error.message;
-    badgeEl.style.display = "none";
-  }
-}
-
 function renderStudentFocusCard(student, logs) {
   const panel = document.getElementById("studentFocusPanel");
   if (!panel || !student) {
@@ -77,9 +44,7 @@ async function loadDashboard() {
     isAdmin = user.role === 'admin';
     
     const addBtn = document.getElementById('addStudentBtn');
-    const qrBtn = document.getElementById('generateQrBtn');
     if (addBtn) addBtn.style.display = isAdminOrTeacher ? 'block' : 'none';
-    if (qrBtn) qrBtn.style.display = isAdminOrTeacher ? 'inline-block' : 'none';
     
     document.querySelectorAll('.admin-only').forEach(el => el.style.display = isAdminOrTeacher ? 'table-cell' : 'none');
     
@@ -159,7 +124,6 @@ async function loadDashboard() {
     const myStudent = allStudents.find(student => student.id === currentUser.studentId);
     if (myStudent) {
       renderStudentFocusCard(myStudent, allLogs);
-      await loadStudentInsight(currentUser.studentId, token);
     }
   } else {
     const panel = document.getElementById("studentFocusPanel");
@@ -199,25 +163,16 @@ function renderTables(isAdminOrTeacher) {
           <td><code style="background:#f3f4f6; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.85rem;">${student.nfc_uid || '-'}</code></td>
           <td><span class="badge ${student.attendanceStatus === "มาเรียน" ? "badge-ok" : "badge-pending"}">${student.attendanceStatus}</span></td>
           <td style="display:flex; gap:0.25rem;">
-            ${(isAdminOrTeacher || (student.id === myId)) ? `
-              <button class="primary-button ai-student-btn" data-student='${JSON.stringify(student).replace(/'/g, "&#39;")}' style="padding:0.25rem 0.5rem; font-size:0.75rem; background-color:#8b5cf6;">🧠 AI / เกรด</button>
-            ` : '<span class="muted" style="font-size:0.75rem;">-</span>'}
             ${isAdminOrTeacher ? `
             <button class="secondary-button edit-student-btn" data-student='${JSON.stringify(student).replace(/'/g, "&#39;")}' style="padding:0.25rem 0.5rem; font-size:0.75rem;">แก้ไข</button>
             <button class="primary-button delete-student-btn" data-id="${student.id}" style="padding:0.25rem 0.5rem; font-size:0.75rem; background-color:#ef4444;">ลบ</button>
-            ` : ''}
+            ` : '<span class="muted" style="font-size:0.75rem;">-</span>'}
           </td>
         </tr>
       `
     ).join("");
 
-  // Attach student listeners
-  document.querySelectorAll('.ai-student-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const student = JSON.parse(e.target.dataset.student);
-      window.location.href = `/analysis.html?id=${student.id}`;
-    });
-  });
+
 
   if (isAdminOrTeacher) {
 
